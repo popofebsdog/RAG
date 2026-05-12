@@ -1,0 +1,15 @@
+{
+  "name": "mora-rag-gnn-mvp",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "dev:backend": "cd backend && uvicorn app.main:app --reload --port 8000",
+    "dev:frontend": "cd frontend && vite --host 0.0.0.0 --port 5173",
+    "install:all": "python3 -m pip install -r backend/requirements.txt && cd frontend && npm install",
+    "test": "python3 -m compileall backend/app && cd frontend && npm run build"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}
