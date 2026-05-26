@@ -1,0 +1,34 @@
+.DS_Store
+
+# Local environment and virtualenvs
+.env
+.env.*
+!.env.example
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+
+# Frontend dependencies and build output
+frontend/node_modules/
+frontend/dist/
+
+# Runtime/vector stores and generated caches
+qdrant_data/
+backend/qdrant_data/
+backend/data/
+backend/source_cache/
+backend/pages_cache/
+backend/graphs_cache/
+backend/markdown_cache/
+backend/relations_cache/
+backend/ocr_cache/
+backend/vlm_cache/
+backend/images_cache/
+
+# Local planning/runtime artifacts
+.Codex/
+
+# Generated test PDFs can be rebuilt from scripts
+test_artifacts/*.pdf
+test_artifacts/.DS_Store

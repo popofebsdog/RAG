@@ -1,0 +1,667 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Visual RAG 技術說明書</title><style>
+body{margin:0;background:#eef2f7;color:#172033;font:17px/1.65 -apple-system,BlinkMacSystemFont,'Noto Sans TC','PingFang TC','Microsoft JhengHei',sans-serif;}
+.page{max-width:1040px;margin:34px auto;padding:46px 56px;background:#fff;border:1px solid #d9e1ec;box-shadow:0 18px 50px rgba(20,35,60,.10)}
+h1{font-size:34px;line-height:1.25;margin:0 0 16px;color:#0f172a}h2{font-size:24px;margin:34px 0 12px;border-top:1px solid #e5eaf1;padding-top:24px;color:#1e3a5f}h3{font-size:19px;margin:24px 0 8px;color:#28466d}p{margin:8px 0}.bullet{padding-left:20px;position:relative}.bullet:before{content:'•';position:absolute;left:2px;color:#2563eb;font-weight:700}.gap{height:4px}code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}pre{background:#0f172a;color:#e2e8f0;padding:16px;border-radius:8px;overflow:auto;font-size:13px;line-height:1.45}table{border-collapse:collapse;width:100%;margin:14px 0;font-size:14px}td{border:1px solid #d8e0eb;padding:8px 10px;vertical-align:top}.badge{display:inline-block;background:#e8f0ff;color:#2452a3;border:1px solid #cbdcff;border-radius:999px;padding:4px 10px;margin-bottom:12px;font-size:13px;font-weight:700}
+</style></head><body><main class="page"><div class="badge">TECHNICAL_SPEC.md / Web Preview</div><h1>Visual RAG System 技術說明書</h1>
+<div class="gap"></div>
+<p>更新日期：2026-05-20</p>
+<div class="gap"></div>
+<h2>1. 系統定位</h2>
+<div class="gap"></div>
+<p>本系統是一套面向災害調查報告的 Visual GraphRAG 原型，核心目標是將 PDF 報告轉換為可查詢、可視化、可編輯、可追溯的知識圖譜與向量資料庫。</p>
+<div class="gap"></div>
+<p>目前系統重點不是訓練模型，而是透過：</p>
+<div class="gap"></div>
+<p class="bullet">PDF / VLM 解析</p>
+<p class="bullet">結構化 Markdown 與 anchor</p>
+<p class="bullet">自動知識節點與關係抽取</p>
+<p class="bullet">使用者可編輯 node / relation</p>
+<p class="bullet">Qdrant 向量檢索</p>
+<p class="bullet">graph analysis / knowledge graph / graph JSON 輸出</p>
+<p class="bullet">異常警示</p>
+<div class="gap"></div>
+<p>來形成可驗收的 RAG 資料庫與可視化流程。</p>
+<div class="gap"></div>
+<h2>2. 目前狀態評估</h2>
+<div class="gap"></div>
+<p>目前功能已達到可進入驗收測試的階段：</p>
+<div class="gap"></div>
+<p class="bullet">PDF 可上傳、解析、入庫。</p>
+<p class="bullet">VLM 可讀取投影片/圖像型報告內容。</p>
+<p class="bullet">系統可自動建立知識節點與 relation。</p>
+<p class="bullet">使用者可在圖分析與編輯介面調整 relation。</p>
+<p class="bullet">手動/自動節點已統一進入向量資料庫。</p>
+<p class="bullet">專案間資料已分離。</p>
+<p class="bullet">graph analysis 與 knowledge graph 已可輸出 JSON。</p>
+<p class="bullet">Graph JSON Explorer 已可列出與檢視目前專案的 graph JSON。</p>
+<p class="bullet">問答區已移除低價值的 score 與 retrieved chunk 細節。</p>
+<p class="bullet">異常警示目前分為：</p>
+<p>  - `out_of_domain`：主題外問題</p>
+<p>  - `insufficient_evidence`：缺少明確佐證</p>
+<p>  - `relation_contradiction`：因果矛盾</p>
+<div class="gap"></div>
+<p>暫時不建議新增「工程判讀 / 審查意見」回答模式，原因是目前資料量偏少，若加入角色 prompt 容易造成回答發散。現階段應優先維持問答穩定、圖譜可追溯、JSON 可驗收。</p>
+<div class="gap"></div>
+<h2>3. 技術架構</h2>
+<div class="gap"></div>
+<h3>3.1 前端</h3>
+<div class="gap"></div>
+<p class="bullet">Framework：Vue 3</p>
+<p class="bullet">Language：TypeScript</p>
+<p class="bullet">Build tool：Vite</p>
+<p class="bullet">Dev server：http://127.0.0.1:5173</p>
+<p class="bullet">API proxy：`/api` 轉發至 `http://localhost:8000`</p>
+<div class="gap"></div>
+<p>主要前端模組：</p>
+<div class="gap"></div>
+<table>
+<tr><td>模組</td><td>路徑</td><td>說明</td></tr>
+<tr><td>App shell</td><td>`frontend/src/App.vue`</td><td>主版面、左側工具列、問答區、原文區</td></tr>
+<tr><td>API composable</td><td>`frontend/src/composables/useRag.ts`</td><td>前端 API 呼叫集中管理</td></tr>
+<tr><td>ChatPanel</td><td>`frontend/src/components/ChatPanel/ChatPanel.vue`</td><td>問答介面</td></tr>
+<tr><td>DocumentReader</td><td>`frontend/src/components/DocumentReader/DocumentReader.vue`</td><td>PDF 原文、框選 VLM chunk</td></tr>
+<tr><td>GraphAnalysisView</td><td>`frontend/src/components/GraphAnalysisView/GraphAnalysisView.vue`</td><td>圖分析與 relation 編輯</td></tr>
+<tr><td>KnowledgeGraphView</td><td>`frontend/src/components/KnowledgeGraphView/KnowledgeGraphView.vue`</td><td>知識圖譜檢視與 PDF 單頁對照</td></tr>
+<tr><td>GraphJsonExplorer</td><td>`frontend/src/components/GraphJsonExplorer/GraphJsonExplorer.vue`</td><td>類 Swagger 的 graph JSON 檢視</td></tr>
+<tr><td>ProjectPanel</td><td>`frontend/src/components/ProjectPanel/ProjectPanel.vue`</td><td>專案切換與建立</td></tr>
+<tr><td>UploadPanel</td><td>`frontend/src/components/UploadPanel/UploadPanel.vue`</td><td>PDF 上傳</td></tr>
+</table>
+<div class="gap"></div>
+<h3>3.2 後端</h3>
+<div class="gap"></div>
+<p class="bullet">Framework：FastAPI</p>
+<p class="bullet">Language：Python 3.11</p>
+<p class="bullet">API server：http://127.0.0.1:8000</p>
+<p class="bullet">Main app：`backend/main.py`</p>
+<div class="gap"></div>
+<p>主要後端模組：</p>
+<div class="gap"></div>
+<table>
+<tr><td>模組</td><td>路徑</td><td>說明</td></tr>
+<tr><td>FastAPI app</td><td>`backend/main.py`</td><td>API endpoint 與主要流程</td></tr>
+<tr><td>PDF loader</td><td>`backend/rag/loader.py`</td><td>PyMuPDF / VLM 解析</td></tr>
+<tr><td>Chunking</td><td>`backend/rag/chunking.py`</td><td>文章切分</td></tr>
+<tr><td>Markdown store</td><td>`backend/rag/markdown_store.py`</td><td>Markdown 與 anchor 儲存</td></tr>
+<tr><td>Page store</td><td>`backend/rag/page_store.py`</td><td>頁面文字快取</td></tr>
+<tr><td>OCR store</td><td>`backend/rag/ocr_store.py`</td><td>OCR 結果快取</td></tr>
+<tr><td>Qdrant store</td><td>`backend/rag/qdrant_store.py`</td><td>向量資料庫與 payload</td></tr>
+<tr><td>Retrieval</td><td>`backend/rag/retrieval.py`</td><td>查詢檢索、relation 擴展、source page context</td></tr>
+<tr><td>Knowledge extraction</td><td>`backend/rag/knowledge_extraction.py`</td><td>節點與關係抽取</td></tr>
+<tr><td>Graph analysis</td><td>`backend/rag/graph_analysis.py`</td><td>相似度圖與 centrality/community</td></tr>
+<tr><td>Graph JSON store</td><td>`backend/rag/graph_store.py`</td><td>graph JSON 輸出與讀取</td></tr>
+<tr><td>Anomaly</td><td>`backend/rag/anomaly.py`</td><td>主題外、缺少佐證、因果矛盾判斷</td></tr>
+<tr><td>LLM answer</td><td>`backend/rag/llm.py`</td><td>問答 LLM 呼叫</td></tr>
+</table>
+<div class="gap"></div>
+<h3>3.3 儲存層</h3>
+<div class="gap"></div>
+<table>
+<tr><td>類型</td><td>位置</td><td>說明</td></tr>
+<tr><td>原始 PDF</td><td>`backend/source_cache/{project_id}/`</td><td>原始檔案</td></tr>
+<tr><td>Page text</td><td>`backend/pages_cache/{project_id}/`</td><td>PDF 解析後頁面文字 JSON</td></tr>
+<tr><td>Markdown</td><td>`backend/markdown_cache/{project_id}/`</td><td>清理後 Markdown</td></tr>
+<tr><td>Anchors</td><td>`backend/markdown_cache/{project_id}/*.anchors.json`</td><td>段落 anchor</td></tr>
+<tr><td>Images</td><td>`backend/images_cache/{project_id}/`</td><td>頁面圖片</td></tr>
+<tr><td>OCR</td><td>`backend/ocr_cache/{project_id}/`</td><td>OCR 文字位置</td></tr>
+<tr><td>Relations</td><td>`backend/relations_cache/{project_id}/relations.json`</td><td>使用者與自動 relation</td></tr>
+<tr><td>Graph JSON</td><td>`backend/graphs_cache/{project_id}/`</td><td>graph JSON latest 檔</td></tr>
+<tr><td>Vector DB</td><td>`backend/qdrant_data/`</td><td>Qdrant local storage</td></tr>
+</table>
+<div class="gap"></div>
+<h2>4. 資料流程</h2>
+<div class="gap"></div>
+<h3>4.1 PDF 入庫流程</h3>
+<div class="gap"></div>
+<pre><code>PDF upload
+  -&gt; PDF loader / VLM parser
+  -&gt; page text
+  -&gt; clean Markdown + anchors
+  -&gt; semantic chunks
+  -&gt; embeddings
+  -&gt; Qdrant upsert
+  -&gt; extract knowledge graph
+  -&gt; manual-like knowledge nodes
+  -&gt; relation vectorization</code></pre>
+<div class="gap"></div>
+<h3>4.2 問答流程</h3>
+<div class="gap"></div>
+<pre><code>question
+  -&gt; embed query
+  -&gt; Qdrant search
+  -&gt; hazard router score
+  -&gt; manual relation neighbor expansion
+  -&gt; source page context expansion
+  -&gt; LLM answer
+  -&gt; anomaly checks
+  -&gt; query graph JSON export</code></pre>
+<div class="gap"></div>
+<h3>4.3 圖分析流程</h3>
+<div class="gap"></div>
+<pre><code>chunks + embeddings + relations
+  -&gt; similarity graph
+  -&gt; centrality / community / density
+  -&gt; graph-analysis view
+  -&gt; knowledge-graph projection
+  -&gt; graph JSON export</code></pre>
+<div class="gap"></div>
+<h2>5. LLM 與模型設定</h2>
+<div class="gap"></div>
+<h3>5.1 目前問答 LLM</h3>
+<div class="gap"></div>
+<p>問答回答目前由 `backend/rag/llm.py` 控制。</p>
+<div class="gap"></div>
+<p>目前預設：</p>
+<div class="gap"></div>
+<pre><code>LLM_PROVIDER=ollama
+OLLAMA_MODEL=llama3.2</code></pre>
+<div class="gap"></div>
+<p>若 `.env` 未設定 `LLM_PROVIDER`，問答會走本機 Ollama：</p>
+<div class="gap"></div>
+<pre><code>http://localhost:11434/api/chat</code></pre>
+<div class="gap"></div>
+<p>若要改為 API，需設定：</p>
+<div class="gap"></div>
+<pre><code>LLM_PROVIDER=anthropic
+ANTHROPIC_API_KEY=...
+ANTHROPIC_MODEL=claude-sonnet-4-5</code></pre>
+<div class="gap"></div>
+<p>目前尚未實作 OpenAI text answer provider；OpenAI 目前主要用於 VLM。</p>
+<div class="gap"></div>
+<h3>5.2 目前 VLM</h3>
+<div class="gap"></div>
+<p>`.env` 目前支援：</p>
+<div class="gap"></div>
+<pre><code>VLM_PROVIDER=openai
+OPENAI_API_KEY=...
+OPENAI_VISION_MODEL=gpt-4.1-mini</code></pre>
+<div class="gap"></div>
+<p>VLM 用於：</p>
+<div class="gap"></div>
+<p class="bullet">PDF 頁面圖像解析</p>
+<p class="bullet">原文區框選圖片後生成可編輯 chunk</p>
+<div class="gap"></div>
+<h3>5.3 Embedding</h3>
+<div class="gap"></div>
+<p>Embedding 由 `backend/rag/embedding.py` 控制。實際行為依 `.env` 與本機 Ollama embedding endpoint 決定。</p>
+<div class="gap"></div>
+<h2>6. Graph JSON 輸出</h2>
+<div class="gap"></div>
+<p>Graph JSON 會輸出至：</p>
+<div class="gap"></div>
+<pre><code>backend/graphs_cache/{project_id}/</code></pre>
+<div class="gap"></div>
+<p>目前支援以下 latest 檔：</p>
+<div class="gap"></div>
+<table>
+<tr><td>檔名</td><td>產生時機</td><td>說明</td></tr>
+<tr><td>`graph_analysis_latest.json`</td><td>呼叫 `/graph-analysis`</td><td>完整圖分析資料</td></tr>
+<tr><td>`knowledge_graph_latest.json`</td><td>呼叫 `/graph-analysis`</td><td>知識圖譜節點與 relation</td></tr>
+<tr><td>`query_graph_latest.json`</td><td>呼叫 `/query`</td><td>問答流程圖</td></tr>
+<tr><td>`embedding_space_latest.json`</td><td>呼叫 `/umap`</td><td>embedding 空間投影</td></tr>
+</table>
+<div class="gap"></div>
+<p>Graph JSON Explorer 使用：</p>
+<div class="gap"></div>
+<pre><code>GET /api/graphs/json?project_id={project_id}
+GET /api/graphs/json/{filename}?project_id={project_id}</code></pre>
+<div class="gap"></div>
+<h2>7. API 端點總覽</h2>
+<div class="gap"></div>
+<p>前端使用 `/api` proxy。以下端點以後端實際路徑表示，例如前端呼叫 `/api/health` 對應後端 `/health`。</p>
+<div class="gap"></div>
+<h3>7.1 Health</h3>
+<div class="gap"></div>
+<p>#### GET `/health`</p>
+<div class="gap"></div>
+<p>用途：檢查後端狀態與已索引 chunk 數。</p>
+<div class="gap"></div>
+<p>Response：</p>
+<div class="gap"></div>
+<pre><code>{
+  "status": "ok",
+  "indexed_chunks": 0
+}</code></pre>
+<div class="gap"></div>
+<h3>7.2 Ingest</h3>
+<div class="gap"></div>
+<p>#### POST `/ingest`</p>
+<div class="gap"></div>
+<p>用途：上傳 PDF 並建立 chunks、向量、knowledge nodes、relations。</p>
+<div class="gap"></div>
+<p>Content-Type：`multipart/form-data`</p>
+<div class="gap"></div>
+<p>Form fields：</p>
+<div class="gap"></div>
+<table>
+<tr><td>欄位</td><td>型別</td><td>預設</td><td>說明</td></tr>
+<tr><td>`file`</td><td>file</td><td>required</td><td>PDF 檔</td></tr>
+<tr><td>`loader_type`</td><td>string</td><td>`pymupdf4llm`</td><td>PDF loader</td></tr>
+<tr><td>`chunk_mode`</td><td>string</td><td>`semantic`</td><td>chunk 模式</td></tr>
+<tr><td>`mode`</td><td>string</td><td>`append`</td><td>`append` 或 `replace`</td></tr>
+<tr><td>`chunk_strategy`</td><td>string</td><td>`auto`</td><td>保留欄位，目前主要走 unified flow</td></tr>
+<tr><td>`project_id`</td><td>string</td><td>`default`</td><td>專案 ID</td></tr>
+<tr><td>`region`</td><td>string</td><td>empty</td><td>地區 metadata</td></tr>
+<tr><td>`year`</td><td>string</td><td>empty</td><td>年份 metadata</td></tr>
+<tr><td>`perspective`</td><td>string</td><td>empty</td><td>視角 metadata</td></tr>
+</table>
+<div class="gap"></div>
+<p>Response：`IngestResponse`</p>
+<div class="gap"></div>
+<pre><code>{
+  "filename": "report.pdf",
+  "total_pages": 3,
+  "total_chunks": 21,
+  "chunks": []
+}</code></pre>
+<div class="gap"></div>
+<h3>7.3 Project and Files</h3>
+<div class="gap"></div>
+<p>#### GET `/project/files`</p>
+<div class="gap"></div>
+<p>Query：</p>
+<div class="gap"></div>
+<table>
+<tr><td>欄位</td><td>型別</td><td>預設</td></tr>
+<tr><td>`project_id`</td><td>string</td><td>`default`</td></tr>
+</table>
+<div class="gap"></div>
+<p>用途：列出專案內已上傳文件與 chunk 數。</p>
+<div class="gap"></div>
+<p>#### DELETE `/project/clear`</p>
+<div class="gap"></div>
+<p>Query：</p>
+<div class="gap"></div>
+<table>
+<tr><td>欄位</td><td>型別</td><td>預設</td></tr>
+<tr><td>`project_id`</td><td>string</td><td>`default`</td></tr>
+</table>
+<div class="gap"></div>
+<p>用途：清空專案內 Qdrant、pages、markdown、source、OCR、images、relations。</p>
+<div class="gap"></div>
+<p>Response：</p>
+<div class="gap"></div>
+<pre><code>{ "status": "cleared" }</code></pre>
+<div class="gap"></div>
+<p>#### DELETE `/project/files/{filename}`</p>
+<div class="gap"></div>
+<p>Query：</p>
+<div class="gap"></div>
+<table>
+<tr><td>欄位</td><td>型別</td><td>預設</td></tr>
+<tr><td>`project_id`</td><td>string</td><td>`default`</td></tr>
+</table>
+<div class="gap"></div>
+<p>用途：移除單一文件與相關快取。</p>
+<div class="gap"></div>
+<p>#### HEAD `/project/files/{filename}/pdf`</p>
+<div class="gap"></div>
+<p>用途：檢查 PDF 原檔是否存在。</p>
+<div class="gap"></div>
+<p>#### GET `/project/files/{filename}/pdf`</p>
+<div class="gap"></div>
+<p>用途：讀取原始 PDF，回傳 `application/pdf` inline。</p>
+<div class="gap"></div>
+<p>#### GET `/project/files/{filename}/ocr`</p>
+<div class="gap"></div>
+<p>用途：取得或產生 OCR 文字位置。</p>
+<div class="gap"></div>
+<p>Response：`OCRPageModel[]`</p>
+<div class="gap"></div>
+<h3>7.4 Page, Markdown, Images</h3>
+<div class="gap"></div>
+<p>#### GET `/project/pages/{filename}`</p>
+<div class="gap"></div>
+<p>用途：取得 PDF 解析後 page text。</p>
+<div class="gap"></div>
+<p>Response：`PageTextModel[]`</p>
+<div class="gap"></div>
+<p>#### GET `/project/markdown/{filename}`</p>
+<div class="gap"></div>
+<p>用途：取得清理後 Markdown 與 anchors。</p>
+<div class="gap"></div>
+<p>Response：</p>
+<div class="gap"></div>
+<pre><code>{
+  "filename": "report.pdf",
+  "markdown": "...",
+  "anchors": []
+}</code></pre>
+<div class="gap"></div>
+<p>#### GET `/project/pages/{filename}/images`</p>
+<div class="gap"></div>
+<p>用途：取得頁面抽出的圖片。</p>
+<div class="gap"></div>
+<p>Response：`PageImageModel[]`</p>
+<div class="gap"></div>
+<h3>7.5 VLM Selection</h3>
+<div class="gap"></div>
+<p>#### POST `/vlm/selection`</p>
+<div class="gap"></div>
+<p>用途：原文 PDF 區域框選後，將裁切圖片送至 VLM 產生文字理解，使用者可確認後轉成 chunk。</p>
+<div class="gap"></div>
+<p>Request：</p>
+<div class="gap"></div>
+<pre><code>{
+  "image_b64": "base64-png",
+  "source_doc": "report.pdf",
+  "source_page": 3,
+  "project_id": "proj_xxx"
+}</code></pre>
+<div class="gap"></div>
+<p>Response：</p>
+<div class="gap"></div>
+<pre><code>{
+  "label": "崩塌機制",
+  "description": "...",
+  "evidence_type": "image_selection",
+  "source_doc": "report.pdf",
+  "source_page": 3
+}</code></pre>
+<div class="gap"></div>
+<h3>7.6 Image Chunks</h3>
+<div class="gap"></div>
+<p>#### POST `/chunks/image`</p>
+<div class="gap"></div>
+<p>用途：建立圖片 chunk，使用 CLIP image embedding。</p>
+<div class="gap"></div>
+<p>Request：</p>
+<div class="gap"></div>
+<pre><code>{
+  "label": "現場崩塌照片",
+  "source_doc": "report.pdf",
+  "source_page": 3,
+  "image_index": 0,
+  "data_b64": "base64-png",
+  "project_id": "proj_xxx"
+}</code></pre>
+<div class="gap"></div>
+<p>#### GET `/chunks/image`</p>
+<div class="gap"></div>
+<p>Query：</p>
+<div class="gap"></div>
+<table>
+<tr><td>欄位</td><td>型別</td><td>預設</td></tr>
+<tr><td>`project_id`</td><td>string</td><td>`default`</td></tr>
+</table>
+<div class="gap"></div>
+<p>用途：列出 image chunks。</p>
+<div class="gap"></div>
+<p>#### DELETE `/chunks/image/{chunk_id}`</p>
+<div class="gap"></div>
+<p>用途：刪除 image chunk。</p>
+<div class="gap"></div>
+<h3>7.7 Manual Chunks</h3>
+<div class="gap"></div>
+<p>#### POST `/chunks/manual`</p>
+<div class="gap"></div>
+<p>用途：建立使用者確認後的知識節點，會寫入向量資料庫。</p>
+<div class="gap"></div>
+<p>Request：</p>
+<div class="gap"></div>
+<pre><code>{
+  "text": "平浪橋南側邊坡發生崩塌。",
+  "label": "平浪橋南側崩塌",
+  "source_doc": "report.pdf",
+  "source_page": 3,
+  "source_anchor": "^p3-key",
+  "project_id": "proj_xxx",
+  "region": null,
+  "year": null,
+  "perspective": null
+}</code></pre>
+<div class="gap"></div>
+<p>#### GET `/chunks/manual`</p>
+<div class="gap"></div>
+<p>Query：</p>
+<div class="gap"></div>
+<table>
+<tr><td>欄位</td><td>型別</td><td>預設</td></tr>
+<tr><td>`project_id`</td><td>string</td><td>`default`</td></tr>
+</table>
+<div class="gap"></div>
+<p>用途：列出 manual / knowledge nodes。</p>
+<div class="gap"></div>
+<p>#### DELETE `/chunks/manual/{chunk_id}`</p>
+<div class="gap"></div>
+<p>Query：</p>
+<div class="gap"></div>
+<table>
+<tr><td>欄位</td><td>型別</td><td>預設</td></tr>
+<tr><td>`project_id`</td><td>string</td><td>`default`</td></tr>
+</table>
+<div class="gap"></div>
+<p>用途：刪除節點，並移除相關 relation。</p>
+<div class="gap"></div>
+<h3>7.8 Relations</h3>
+<div class="gap"></div>
+<p>#### POST `/chunks/relations`</p>
+<div class="gap"></div>
+<p>用途：建立 node relation，並建立 relation vector。</p>
+<div class="gap"></div>
+<p>Request：</p>
+<div class="gap"></div>
+<pre><code>{
+  "from_chunk_id": "manual:a",
+  "to_chunk_id": "manual:b",
+  "label": "導致",
+  "weight": 1.0,
+  "project_id": "proj_xxx"
+}</code></pre>
+<div class="gap"></div>
+<p>特性：</p>
+<div class="gap"></div>
+<p class="bullet">不允許 from / to 相同。</p>
+<p class="bullet">同一組 `from_chunk_id + to_chunk_id + label` 不可重複。</p>
+<p class="bullet">`weight` 會限制在 0 到 1。</p>
+<div class="gap"></div>
+<p>#### GET `/chunks/relations`</p>
+<div class="gap"></div>
+<p>Query：</p>
+<div class="gap"></div>
+<table>
+<tr><td>欄位</td><td>型別</td><td>預設</td></tr>
+<tr><td>`project_id`</td><td>string</td><td>`default`</td></tr>
+</table>
+<div class="gap"></div>
+<p>用途：列出 relations。</p>
+<div class="gap"></div>
+<p>#### PATCH `/chunks/relations/{relation_id}/weight`</p>
+<div class="gap"></div>
+<p>用途：更新 relation weight。</p>
+<div class="gap"></div>
+<p>Body：</p>
+<div class="gap"></div>
+<pre><code>{ "weight": 0.85 }</code></pre>
+<div class="gap"></div>
+<p>#### DELETE `/chunks/relations/{relation_id}`</p>
+<div class="gap"></div>
+<p>Query：</p>
+<div class="gap"></div>
+<table>
+<tr><td>欄位</td><td>型別</td><td>預設</td></tr>
+<tr><td>`project_id`</td><td>string</td><td>`default`</td></tr>
+</table>
+<div class="gap"></div>
+<p>用途：刪除 relation 與 relation vector。</p>
+<div class="gap"></div>
+<h3>7.9 Query</h3>
+<div class="gap"></div>
+<p>#### POST `/query`</p>
+<div class="gap"></div>
+<p>用途：問答、檢索、LLM 回答、異常警示、query graph JSON 輸出。</p>
+<div class="gap"></div>
+<p>Request：</p>
+<div class="gap"></div>
+<pre><code>{
+  "question": "平浪橋南側有災情？",
+  "top_k": 5,
+  "region": null,
+  "year": null,
+  "project_id": "proj_xxx"
+}</code></pre>
+<div class="gap"></div>
+<p>Response：`QueryResponse`</p>
+<div class="gap"></div>
+<pre><code>{
+  "question": "...",
+  "answer": "...",
+  "retrieved_chunks": [],
+  "graph_data": {
+    "nodes": [],
+    "edges": []
+  },
+  "anomalies": [],
+  "router": {}
+}</code></pre>
+<div class="gap"></div>
+<p>異常類型：</p>
+<div class="gap"></div>
+<table>
+<tr><td>type</td><td>中文顯示</td><td>說明</td></tr>
+<tr><td>`out_of_domain`</td><td>主題外問題</td><td>問題語意與目前知識庫主題不相符</td></tr>
+<tr><td>`insufficient_evidence`</td><td>缺少明確佐證</td><td>問題與災害領域相關，但目前圖譜或文件沒有足夠證據</td></tr>
+<tr><td>`relation_contradiction`</td><td>因果矛盾</td><td>使用者斷言的因果方向與已知 relation 相反</td></tr>
+</table>
+<div class="gap"></div>
+<h3>7.10 UMAP / Embedding Space</h3>
+<div class="gap"></div>
+<p>#### POST `/umap`</p>
+<div class="gap"></div>
+<p>用途：輸出 embedding 空間座標，並寫出 `embedding_space_latest.json`。</p>
+<div class="gap"></div>
+<p>Request：</p>
+<div class="gap"></div>
+<pre><code>{
+  "question": "平浪橋南側有災情？",
+  "top_k": 5,
+  "region": null,
+  "year": null,
+  "project_id": "proj_xxx"
+}</code></pre>
+<div class="gap"></div>
+<p>Response：`UMAPResponse`</p>
+<div class="gap"></div>
+<h3>7.11 Graph JSON</h3>
+<div class="gap"></div>
+<p>#### GET `/graphs/json`</p>
+<div class="gap"></div>
+<p>Query：</p>
+<div class="gap"></div>
+<table>
+<tr><td>欄位</td><td>型別</td><td>預設</td></tr>
+<tr><td>`project_id`</td><td>string</td><td>`default`</td></tr>
+</table>
+<div class="gap"></div>
+<p>用途：列出目前 project 已輸出的 graph JSON。</p>
+<div class="gap"></div>
+<p>Response：</p>
+<div class="gap"></div>
+<pre><code>{
+  "files": [
+    {
+      "filename": "graph_analysis_latest.json",
+      "graph_name": "graph_analysis",
+      "updated_at": 1779256466,
+      "size_bytes": 81430,
+      "node_count": 27,
+      "edge_count": 351
+    }
+  ]
+}</code></pre>
+<div class="gap"></div>
+<p>#### GET `/graphs/json/{filename}`</p>
+<div class="gap"></div>
+<p>用途：讀取單一 graph JSON。</p>
+<div class="gap"></div>
+<h3>7.12 Graph Analysis</h3>
+<div class="gap"></div>
+<p>#### POST `/graph-analysis`</p>
+<div class="gap"></div>
+<p>用途：建立 similarity graph、centrality、community、density，並寫出：</p>
+<div class="gap"></div>
+<p class="bullet">`graph_analysis_latest.json`</p>
+<p class="bullet">`knowledge_graph_latest.json`</p>
+<div class="gap"></div>
+<p>Request：</p>
+<div class="gap"></div>
+<pre><code>{
+  "question": null,
+  "top_k": 5,
+  "threshold": 0.5,
+  "region": null,
+  "year": null,
+  "project_id": "proj_xxx"
+}</code></pre>
+<div class="gap"></div>
+<p>Response：`GraphAnalysisResponse`</p>
+<div class="gap"></div>
+<pre><code>{
+  "nodes": [],
+  "edges": [],
+  "num_communities": 1,
+  "density": 1.0,
+  "manual_relations": []
+}</code></pre>
+<div class="gap"></div>
+<h2>8. 前端畫面功能</h2>
+<div class="gap"></div>
+<table>
+<tr><td>區域</td><td>說明</td></tr>
+<tr><td>左側工具列</td><td>專案、PDF 上傳、檔案列表</td></tr>
+<tr><td>原文</td><td>PDF 原檔檢視、框選圖片、VLM 辨識、建立 chunk</td></tr>
+<tr><td>詢問文件</td><td>一般文件問答</td></tr>
+<tr><td>圖分析與編輯</td><td>節點、relation 建立/刪除/權重調整、異常警示</td></tr>
+<tr><td>知識圖譜</td><td>知識節點與 relation 圖、節點對應 PDF 單頁</td></tr>
+<tr><td>Graph JSON</td><td>類 Swagger API explorer，列出與檢視 graph JSON</td></tr>
+</table>
+<div class="gap"></div>
+<h2>9. 已知限制</h2>
+<div class="gap"></div>
+<p>1. 問答 LLM 目前預設仍是 Ollama；若需要穩定工程語氣，未來可改接 API。</p>
+<p>2. `/umap` 在部分本機環境可能因 embedding/model lock 較慢，適合展示但不建議當核心驗收依據。</p>
+<p>3. 目前無使用者登入與權限控管，資料以本機 project_id 區隔。</p>
+<p>4. Graph JSON 目前輸出 latest snapshot，尚未保留每次歷史版本。</p>
+<p>5. `README.md` 仍有舊版 FAISS / Claude / D3 敘述，若要交付建議後續同步更新。</p>
+<div class="gap"></div>
+<h2>10. 後續可優化項目</h2>
+<div class="gap"></div>
+<p>目前暫時不需要再加大功能。若要持續優化，建議優先順序如下：</p>
+<div class="gap"></div>
+<p>1. 將問答 LLM 從 Ollama 切到 API provider，提高回答穩定性。</p>
+<p>2. Graph JSON 增加版本化輸出，例如 `graph_analysis_YYYYMMDD_HHMMSS.json`。</p>
+<p>3. 增加一鍵「驗收報告」輸出，整理 node 數、relation 數、異常測試結果與 graph JSON 路徑。</p>
+<p>4. 將 `/umap` 改成非同步 job，避免大型資料時阻塞。</p>
+<p>5. 補 API synthetic tests，至少覆蓋 ingest、manual chunk、relation、query、graph-analysis、graphs/json。</p>
+<p>6. 更新 `README.md`，避免與目前 Qdrant / VLM / GraphRAG 架構不一致。</p>
+<div class="gap"></div>
+<h2>11. 建議驗收測試</h2>
+<div class="gap"></div>
+<h3>11.1 基本流程</h3>
+<div class="gap"></div>
+<p>1. 建立專案。</p>
+<p>2. 上傳 GeoPORT PDF。</p>
+<p>3. 確認左側檔案列表出現 PDF。</p>
+<p>4. 進入圖分析與編輯。</p>
+<p>5. 確認節點與 relation 出現。</p>
+<p>6. 進入知識圖譜。</p>
+<p>7. 點選 node，確認右側顯示對應 PDF 單頁。</p>
+<p>8. 進入 Graph JSON，確認可讀取 `graph_analysis_latest.json` 與 `knowledge_graph_latest.json`。</p>
+<div class="gap"></div>
+<h3>11.2 問答測試</h3>
+<div class="gap"></div>
+<table>
+<tr><td>問題</td><td>預期</td></tr>
+<tr><td>平浪橋南側有災情？</td><td>正常回答，不觸發異常</td></tr>
+<tr><td>平浪橋西側有災情？</td><td>回答缺少證據，觸發 `insufficient_evidence`</td></tr>
+<tr><td>牛肉麵一碗多少錢？</td><td>觸發 `out_of_domain`</td></tr>
+</table>
+<div class="gap"></div>
+<h3>11.3 Relation 測試</h3>
+<div class="gap"></div>
+<p>1. 建立 A -&gt; B relation。</p>
+<p>2. 重複建立相同 A -&gt; B + label。</p>
+<p>3. 預期後端回傳 409，前端顯示已存在。</p>
+<p>4. 調整 relation weight。</p>
+<p>5. 重新整理圖分析，確認線條深淺變化。</p>
+<div class="gap"></div>
+<div class="gap"></div></main></body></html>
