@@ -8,6 +8,7 @@ import numpy as np
 
 from .chunking import Chunk
 from .hazards import detect_hazard_tags
+from . import postgres_store
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -113,31 +114,36 @@ class QdrantStore:
         from qdrant_client.models import PointStruct
 
         meta = meta or DocMeta()
+        payloads = [
+            {
+                "chunk_id": c.chunk_id,
+                "text": c.text,
+                "source_page": c.source_page,
+                "start_char": c.start_char,
+                "end_char": c.end_char,
+                "source_doc": c.source_doc,
+                "source_anchor": c.source_anchor,
+                "region": meta.region,
+                "year": meta.year,
+                "perspective": meta.perspective,
+                "project_id": meta.project_id,
+                "label": None,
+                "is_manual": False,
+                "node_type": "auto",
+                "hazard_tags": detect_hazard_tags(c.text),
+            }
+            for c in chunks
+        ]
         points = [
             PointStruct(
                 id=_uid(c.chunk_id),
                 vector=emb.tolist(),
-                payload={
-                    "chunk_id": c.chunk_id,
-                    "text": c.text,
-                    "source_page": c.source_page,
-                    "start_char": c.start_char,
-                    "end_char": c.end_char,
-                    "source_doc": c.source_doc,
-                    "source_anchor": c.source_anchor,
-                    "region": meta.region,
-                    "year": meta.year,
-                    "perspective": meta.perspective,
-                    "project_id": meta.project_id,
-                    "label": None,
-                    "is_manual": False,
-                    "node_type": "auto",
-                    "hazard_tags": detect_hazard_tags(c.text),
-                },
+                payload=payload,
             )
-            for c, emb in zip(chunks, embeddings)
+            for c, emb, payload in zip(chunks, embeddings, payloads)
         ]
         self.client.upsert(collection_name=self.COLLECTION, points=points)
+        postgres_store.bulk_upsert_chunks(meta.project_id, payloads)
 
     def upsert_manual(
         self,
@@ -149,32 +155,34 @@ class QdrantStore:
         from qdrant_client.models import PointStruct
 
         meta = meta or DocMeta()
+        payload = {
+            "chunk_id": chunk.chunk_id,
+            "text": chunk.text,
+            "source_page": chunk.source_page,
+            "start_char": 0,
+            "end_char": len(chunk.text),
+            "source_doc": chunk.source_doc,
+            "source_anchor": chunk.source_anchor,
+            "region": meta.region,
+            "year": meta.year,
+            "perspective": meta.perspective,
+            "project_id": meta.project_id,
+            "label": label,
+            "is_manual": True,
+            "node_type": "manual",
+            "hazard_tags": detect_hazard_tags(f"{label}\n{chunk.text}"),
+        }
         self.client.upsert(
             collection_name=self.COLLECTION,
             points=[
                 PointStruct(
                     id=_uid(chunk.chunk_id),
                     vector=embedding.tolist(),
-                    payload={
-                        "chunk_id": chunk.chunk_id,
-                        "text": chunk.text,
-                        "source_page": chunk.source_page,
-                        "start_char": 0,
-                        "end_char": len(chunk.text),
-                        "source_doc": chunk.source_doc,
-                        "source_anchor": chunk.source_anchor,
-                        "region": meta.region,
-                        "year": meta.year,
-                        "perspective": meta.perspective,
-                        "project_id": meta.project_id,
-                        "label": label,
-                        "is_manual": True,
-                        "node_type": "manual",
-                        "hazard_tags": detect_hazard_tags(f"{label}\n{chunk.text}"),
-                    },
+                    payload=payload,
                 )
             ],
         )
+        postgres_store.bulk_upsert_chunks(meta.project_id, [payload])
 
     def upsert_relation(
         self,
@@ -195,35 +203,39 @@ class QdrantStore:
         from qdrant_client.models import PointStruct
 
         chunk_id = relation_chunk_id(relation_id)
+        payload = {
+            "chunk_id": chunk_id,
+            "text": text,
+            "source_page": 0,
+            "start_char": 0,
+            "end_char": len(text),
+            "source_doc": "",
+            "region": None,
+            "year": None,
+            "perspective": None,
+            "project_id": project_id,
+            "label": label,
+            "is_manual": True,
+            "node_type": "relation",
+            "relation_id": relation_id,
+            "from_chunk_id": from_chunk_id,
+            "to_chunk_id": to_chunk_id,
+            "weight": max(0.0, min(1.0, weight)),
+            "hazard_tags": detect_hazard_tags(f"{label}\n{text}"),
+            "metadata": {"relation_id": relation_id, "from_chunk_id": from_chunk_id, "to_chunk_id": to_chunk_id},
+        }
         self.client.upsert(
             collection_name=self.COLLECTION,
             points=[
                 PointStruct(
                     id=_uid(chunk_id),
                     vector=embedding.tolist(),
-                    payload={
-                        "chunk_id": chunk_id,
-                        "text": text,
-                        "source_page": 0,
-                        "start_char": 0,
-                        "end_char": len(text),
-                        "source_doc": "",
-                        "region": None,
-                        "year": None,
-                        "perspective": None,
-                        "project_id": project_id,
-                        "label": label,
-                        "is_manual": True,
-                        "node_type": "relation",
-                        "relation_id": relation_id,
-                        "from_chunk_id": from_chunk_id,
-                        "to_chunk_id": to_chunk_id,
-                        "weight": max(0.0, min(1.0, weight)),
-                        "hazard_tags": detect_hazard_tags(f"{label}\n{text}"),
-                    },
+                    payload=payload,
                 )
             ],
         )
+        postgres_store.bulk_upsert_chunks(project_id, [payload])
+        postgres_store.set_relation_vectorized(relation_id, True)
 
     def remove_doc(self, source_doc: str, project_id: str = "default") -> None:
         from qdrant_client.models import Filter, FieldCondition, MatchValue, FilterSelector
@@ -237,12 +249,15 @@ class QdrantStore:
                 ])
             ),
         )
+        postgres_store.remove_chunks_for_document(project_id, source_doc)
+        postgres_store.remove_document(project_id, source_doc)
 
     def remove_chunk(self, chunk_id: str) -> None:
         self.client.delete(
             collection_name=self.COLLECTION,
             points_selector=[_uid(chunk_id)],
         )
+        postgres_store.remove_chunk(chunk_id)
 
     def remove_relation(self, relation_id: str) -> None:
         self.remove_chunk(relation_chunk_id(relation_id))
@@ -275,6 +290,7 @@ class QdrantStore:
                 filter=Filter(must=[_project_condition(project_id)])
             ),
         )
+        postgres_store.clear_project(project_id)
 
     # ── read ─────────────────────────────────────────────────────────────────
 

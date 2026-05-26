@@ -28,7 +28,20 @@ export interface ProjectFilesResponse {
 export interface DocMetadata {
   region?: string
   year?: number
+  date?: string
   perspective?: string
+}
+
+export interface ProjectOption {
+  value: string
+  label: string
+  metadata?: Record<string, unknown>
+}
+
+export interface ProjectFilterOptions {
+  locations: ProjectOption[]
+  dates: ProjectOption[]
+  perspectives: ProjectOption[]
 }
 
 export interface IngestResponse {

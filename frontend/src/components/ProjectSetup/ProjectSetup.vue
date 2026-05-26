@@ -26,40 +26,51 @@
               autofocus
               class="w-full px-3 py-2.5 rounded-xl bg-white/5 border text-sm text-white placeholder-slate-600 focus:outline-none transition-colors"
               :class="name.trim() ? 'border-indigo-500/50' : 'border-white/10 focus:border-white/25'"
-              @keydown.enter="region || submit()"
+              @keydown.enter="submit()"
             />
           </div>
 
-          <!-- Region + Year -->
+          <!-- Location + Date -->
           <div class="grid grid-cols-2 gap-3">
             <div class="space-y-1.5">
-              <label class="text-[11px] font-semibold uppercase tracking-widest text-slate-500">地區</label>
-              <input
+              <label class="text-[11px] font-semibold uppercase tracking-widest text-slate-500">地點</label>
+              <select
                 v-model="region"
-                placeholder="台南、高雄…"
                 class="w-full px-3 py-2 rounded-xl bg-white/5 border border-white/10 focus:border-white/25 text-sm text-white placeholder-slate-600 focus:outline-none transition-colors"
-              />
+              >
+                <option value="">選擇地點</option>
+                <option v-for="option in locationOptions" :key="option.value" :value="option.value">
+                  {{ option.label }}
+                </option>
+              </select>
             </div>
             <div class="space-y-1.5">
-              <label class="text-[11px] font-semibold uppercase tracking-widest text-slate-500">年份</label>
-              <input
-                v-model="yearStr"
-                type="number"
-                placeholder="2023"
+              <label class="text-[11px] font-semibold uppercase tracking-widest text-slate-500">日期</label>
+              <select
+                v-model="date"
                 class="w-full px-3 py-2 rounded-xl bg-white/5 border border-white/10 focus:border-white/25 text-sm text-white placeholder-slate-600 focus:outline-none transition-colors"
-              />
+              >
+                <option value="">選擇日期</option>
+                <option v-for="option in dateOptions" :key="option.value" :value="option.value">
+                  {{ option.label }}
+                </option>
+              </select>
             </div>
           </div>
 
           <!-- Perspective -->
           <div class="space-y-1.5">
             <label class="text-[11px] font-semibold uppercase tracking-widest text-slate-500">研究視角</label>
-            <input
+            <select
               v-model="perspective"
-              placeholder="水文分析、地質調查、社會影響…"
               class="w-full px-3 py-2 rounded-xl bg-white/5 border border-white/10 focus:border-white/25 text-sm text-white placeholder-slate-600 focus:outline-none transition-colors"
               @keydown.enter="submit"
-            />
+            >
+              <option value="">選擇視角</option>
+              <option v-for="option in perspectiveOptions" :key="option.value" :value="option.value">
+                {{ option.label }}
+              </option>
+            </select>
           </div>
         </div>
 
@@ -77,15 +88,19 @@
       </div>
 
       <p class="text-center text-xs text-slate-700">
-        專案資訊存在本機，不會上傳任何資料
+        專案資訊會保存為後續圖譜與外部資料節點的篩選條件
       </p>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
-import type { DocMetadata } from '../../types/rag'
+import { computed, ref } from 'vue'
+import type { DocMetadata, ProjectFilterOptions, ProjectOption } from '../../types/rag'
+
+const props = defineProps<{
+  filterOptions?: ProjectFilterOptions
+}>()
 
 const emit = defineEmits<{
   created: [name: string, meta: DocMetadata]
@@ -93,16 +108,36 @@ const emit = defineEmits<{
 
 const name = ref('')
 const region = ref('')
-const yearStr = ref('')
+const date = ref('')
 const perspective = ref('')
+
+const fallbackLocations: ProjectOption[] = [
+  { value: '台2線70.1K 平浪橋南側', label: '台2線70.1K 平浪橋南側' },
+  { value: '龍門', label: '龍門' },
+]
+const fallbackDates: ProjectOption[] = [
+  { value: '2024-06-03', label: '2024-06-03 崩塌發生' },
+  { value: '2024-06-06', label: '2024-06-06 報告日期' },
+]
+const fallbackPerspectives: ProjectOption[] = [
+  { value: '地質調查', label: '地質調查' },
+  { value: '水文雨量', label: '水文雨量' },
+  { value: '道路災害', label: '道路災害' },
+]
+
+const locationOptions = computed(() => props.filterOptions?.locations?.length ? props.filterOptions.locations : fallbackLocations)
+const dateOptions = computed(() => props.filterOptions?.dates?.length ? props.filterOptions.dates : fallbackDates)
+const perspectiveOptions = computed(() => props.filterOptions?.perspectives?.length ? props.filterOptions.perspectives : fallbackPerspectives)
 
 function submit() {
   if (!name.value.trim()) return
-  const y = parseInt(yearStr.value)
+  const yearText = date.value.match(/^\d{4}/)?.[0]
+  const year = yearText ? parseInt(yearText, 10) : undefined
   emit('created', name.value.trim(), {
-    region: region.value.trim() || undefined,
-    year: isNaN(y) ? undefined : y,
-    perspective: perspective.value.trim() || undefined,
+    region: region.value || undefined,
+    date: date.value || undefined,
+    year,
+    perspective: perspective.value || undefined,
   })
 }
 </script>

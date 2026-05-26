@@ -8,8 +8,8 @@
         <div v-if="activeProject" class="flex items-center gap-2 min-w-0">
           <div class="w-2 h-2 rounded-full bg-n2 shrink-0" />
           <span class="font-serif text-[15px] leading-none truncate" style="color:#2C2926">{{ activeProject.name }}</span>
-          <span v-if="activeProject.meta.region || activeProject.meta.year" class="text-[11px] bg-black/[0.06] px-2 py-0.5 rounded shrink-0" style="color:#A9A39A">
-            {{ [activeProject.meta.region, activeProject.meta.year].filter(Boolean).join(' · ') }}
+          <span v-if="activeProject.meta.region || activeProject.meta.date || activeProject.meta.year" class="text-[11px] bg-black/[0.06] px-2 py-0.5 rounded shrink-0" style="color:#A9A39A">
+            {{ [activeProject.meta.region, activeProject.meta.date || activeProject.meta.year].filter(Boolean).join(' · ') }}
           </span>
         </div>
         <div v-else class="text-[13px] font-medium" style="color:#A9A39A">Visual RAG System</div>
@@ -89,6 +89,7 @@
             <ProjectPanel
               :projects="projects"
               :active-project-id="activeProjectId"
+              :filter-options="projectFilterOptions"
               :lang="lang"
               @create="onCreateProject"
               @switch="onSwitchProject"
@@ -277,9 +278,9 @@ import type { DocMetadata, ManualChunkRequest, ManualChunkInfo, ChunkRelation } 
 const {
   ingesting, querying, loadingUmap, loadingGraphAnalysis,
   ingestResult, queryResult, umapResult, graphAnalysisResult,
-  projectFiles, manualChunks, error,
+  projectFiles, manualChunks, error, projectFilterOptions,
   projects, activeProjectId, activeProject,
-  createProject, switchProject, deleteProject,
+  createProject, fetchProjectFilterOptions, switchProject, deleteProject,
   ingestPdf, removeProjectFile, clearProject,
   pdfUrl, pageImageUrl, analyzeSelection, createManualChunk, deleteManualChunk, fetchManualChunks,
   relations, fetchRelations, createRelation, updateRelationWeight, deleteRelation,
@@ -419,6 +420,7 @@ async function runQuery(question: string) {
 }
 
 onMounted(async () => {
+  await fetchProjectFilterOptions()
   if (activeProjectId.value) {
     await Promise.all([fetchProjectFiles(), fetchManualChunks(), fetchRelations()])
   }

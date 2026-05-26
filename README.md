@@ -5,7 +5,8 @@ An **Explainable RAG** system that shows not just the answer, but the full pipel
 ## Features
 
 - **PDF Ingestion** — Upload any PDF; extracted, chunked, and embedded automatically
-- **FAISS Vector Search** — Fast cosine similarity retrieval
+- **Qdrant Vector Search** — Persistent cosine similarity retrieval
+- **PostgreSQL Metadata Store** — Production storage for projects, documents, nodes, relations, graph exports, and query logs
 - **Claude LLM** — Answers grounded strictly in document context
 - **D3.js Pipeline Graph** — Interactive visualization of the full RAG flow
 - **Chunk Highlighting** — See exactly which chunks were retrieved and their similarity scores
@@ -16,7 +17,8 @@ An **Explainable RAG** system that shows not just the answer, but the full pipel
 |---|---|
 | Backend | Python 3.11 + FastAPI |
 | Embeddings | `sentence-transformers` (all-MiniLM-L6-v2) |
-| Vector DB | FAISS (CPU) |
+| Metadata DB | PostgreSQL 16 |
+| Vector DB | Qdrant |
 | PDF Parsing | PyMuPDF (default) / Chandra OCR (optional) |
 | LLM | Anthropic Claude claude-sonnet-4-6 |
 | Frontend | Vue 3 + TypeScript + Vite |
@@ -28,9 +30,13 @@ An **Explainable RAG** system that shows not just the answer, but the full pipel
 ### 1. Backend
 
 ```bash
+docker compose up -d postgres qdrant
+
 cd backend
 cp .env.example .env
 # Edit .env and set ANTHROPIC_API_KEY=<your-anthropic-key>
+# DATABASE_URL defaults to postgresql://visual_rag:visual_rag_password@localhost:55432/visual_rag
+# QDRANT_URL defaults to http://localhost:6333
 
 python -m venv .venv
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
@@ -53,7 +59,7 @@ npm run dev
 
 1. Open `http://localhost:5173`
 2. Drop a PDF into the upload panel
-3. Wait for indexing (chunks + embeddings + FAISS)
+3. Wait for indexing (chunks + embeddings + Qdrant + PostgreSQL metadata)
 4. Type a question → see the answer + graph visualization
 
 ## Optional: Chandra OCR for scanned PDFs
@@ -76,7 +82,8 @@ visual-rag-system/
 │   │   ├── loader.py        # PDF → pages (PyMuPDF / Chandra)
 │   │   ├── chunking.py      # Pages → overlapping chunks
 │   │   ├── embedding.py     # Chunks → sentence-transformer vectors
-│   │   ├── vectorstore.py   # FAISS index (in-memory singleton)
+│   │   ├── qdrant_store.py  # Qdrant vector storage
+│   │   ├── postgres_store.py # PostgreSQL schema + metadata storage
 │   │   ├── retrieval.py     # Query → top-k chunks
 │   │   └── llm.py           # Chunks + query → Claude answer
 │   └── requirements.txt
@@ -95,5 +102,13 @@ visual-rag-system/
 | Method | Path | Description |
 |---|---|---|
 | GET | `/health` | Status + indexed chunk count |
-| POST | `/ingest` | Upload PDF → build FAISS index |
+| GET | `/project/filter-options` | Project location/date dropdown JSON source |
+| POST | `/projects/upsert` | Persist project metadata to PostgreSQL |
+| POST | `/ingest` | Upload PDF → build PostgreSQL metadata + Qdrant vectors |
 | POST | `/query` | Question → answer + graph data |
+
+## Production Storage Model
+
+- PostgreSQL is the source of truth for structured metadata: projects, documents, chunks/nodes, relations, graph export metadata, and query/anomaly logs.
+- Qdrant is the vector database for text chunks, manual nodes, relation vectors, and image embeddings.
+- PDF originals, rendered pages, OCR/VLM cache, and graph JSON files remain file/object-storage assets. For cloud deployment, mount these folders to persistent storage or object storage.

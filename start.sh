@@ -3,6 +3,8 @@ set -e
 
 echo "Starting Visual RAG System..."
 
+docker compose up -d postgres qdrant
+
 # Backend
 (
   cd backend

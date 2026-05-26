@@ -1,0 +1,82 @@
+{
+  "locations": [
+    {
+      "value": "台2線70.1K 平浪橋南側",
+      "label": "台2線70.1K 平浪橋南側",
+      "metadata": {
+        "source": "geoport",
+        "node_source": "external_reference"
+      }
+    },
+    {
+      "value": "台2線70K+100 平浪橋南側",
+      "label": "台2線70K+100 平浪橋南側",
+      "metadata": {
+        "source": "geoport",
+        "node_source": "external_reference"
+      }
+    },
+    {
+      "value": "龍門",
+      "label": "龍門",
+      "metadata": {
+        "source": "future_api",
+        "node_source": "external_reference"
+      }
+    },
+    {
+      "value": "北部濱海公路",
+      "label": "北部濱海公路",
+      "metadata": {
+        "source": "future_api",
+        "node_source": "external_reference"
+      }
+    }
+  ],
+  "dates": [
+    {
+      "value": "2024-06-03",
+      "label": "2024-06-03 崩塌發生",
+      "metadata": {
+        "event_type": "disaster_event"
+      }
+    },
+    {
+      "value": "2024-06-06",
+      "label": "2024-06-06 報告日期",
+      "metadata": {
+        "event_type": "report_date"
+      }
+    },
+    {
+      "value": "2024-06-09",
+      "label": "2024-06-09 現場勘查",
+      "metadata": {
+        "event_type": "field_survey"
+      }
+    }
+  ],
+  "perspectives": [
+    {
+      "value": "地質調查",
+      "label": "地質調查",
+      "metadata": {
+        "domain": "geology"
+      }
+    },
+    {
+      "value": "水文雨量",
+      "label": "水文雨量",
+      "metadata": {
+        "domain": "hydrology"
+      }
+    },
+    {
+      "value": "道路災害",
+      "label": "道路災害",
+      "metadata": {
+        "domain": "road_disaster"
+      }
+    }
+  ]
+}

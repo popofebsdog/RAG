@@ -6,6 +6,8 @@ import re
 import time
 import uuid
 
+from . import postgres_store
+
 _BASE_DIR = os.path.join(os.path.dirname(__file__), "..", "relations_cache")
 
 
@@ -55,6 +57,8 @@ def _save(project_id: str, data: list[dict]) -> None:
 # ── Public API ────────────────────────────────────────────────────────────────
 
 def list_relations(project_id: str) -> list[dict]:
+    if postgres_store.is_enabled():
+        return postgres_store.list_relations(project_id)
     return _load(project_id)
 
 
@@ -65,6 +69,8 @@ def add_relation(
     project_id: str,
     weight: float = 1.0,
 ) -> dict:
+    if postgres_store.is_enabled():
+        return postgres_store.add_relation(from_chunk_id, to_chunk_id, label, project_id, weight)
     relations = _load(project_id)
     relation = {
         "id": str(uuid.uuid4()),
@@ -81,6 +87,8 @@ def add_relation(
 
 
 def update_relation_weight(relation_id: str, weight: float, project_id: str) -> bool:
+    if postgres_store.is_enabled():
+        return postgres_store.update_relation_weight(relation_id, weight, project_id)
     relations = _load(project_id)
     for r in relations:
         if r["id"] == relation_id:
@@ -91,6 +99,8 @@ def update_relation_weight(relation_id: str, weight: float, project_id: str) -> 
 
 
 def remove_relation(relation_id: str, project_id: str) -> bool:
+    if postgres_store.is_enabled():
+        return postgres_store.remove_relation(relation_id, project_id)
     relations = _load(project_id)
     new = [r for r in relations if r["id"] != relation_id]
     if len(new) == len(relations):
@@ -100,11 +110,16 @@ def remove_relation(relation_id: str, project_id: str) -> bool:
 
 
 def clear_relations(project_id: str) -> None:
+    if postgres_store.is_enabled():
+        postgres_store.clear_relations(project_id)
+        return
     _save(project_id, [])
 
 
 def remove_relations_for_chunks(chunk_ids: set[str], project_id: str) -> list[str]:
     """Remove relations touching any chunk id and return removed relation ids."""
+    if postgres_store.is_enabled():
+        return postgres_store.remove_relations_for_chunks(chunk_ids, project_id)
     relations = _load(project_id)
     kept: list[dict] = []
     removed: list[str] = []

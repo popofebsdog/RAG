@@ -16,6 +16,7 @@ import type {
   VLMSelectionRequest,
   VLMSelectionResponse,
   Project,
+  ProjectFilterOptions,
   ChunkRelation,
 } from '../types/rag'
 
@@ -58,6 +59,11 @@ export function useRag() {
   const manualChunks = ref<ManualChunkInfo[]>([])
   const error = ref<string | null>(null)
   const sourceVersion = ref(Date.now())
+  const projectFilterOptions = ref<ProjectFilterOptions>({
+    locations: [],
+    dates: [],
+    perspectives: [],
+  })
 
   // ── project management ────────────────────────────────────────────────────
 
@@ -70,6 +76,50 @@ export function useRag() {
   const activeProject = computed<Project | null>(
     () => projects.value.find((p) => p.id === activeProjectId.value) ?? null,
   )
+
+  function deriveYear(date?: string): number | undefined {
+    const year = date?.match(/^\d{4}/)?.[0]
+    return year ? parseInt(year, 10) : undefined
+  }
+
+  function normalizeMeta(meta: DocMetadata): DocMetadata {
+    return {
+      ...meta,
+      year: meta.year ?? deriveYear(meta.date),
+    }
+  }
+
+  async function persistProject(project: Project): Promise<void> {
+    try {
+      await axios.post(`${BASE}/projects/upsert`, {
+        project_id: project.id,
+        name: project.name,
+        region: project.meta.region ?? null,
+        year: project.meta.year ?? null,
+        date: project.meta.date ?? null,
+        perspective: project.meta.perspective ?? null,
+        metadata: {
+          created_at: project.createdAt,
+          source: 'project_sidebar',
+        },
+      })
+    } catch {
+      // Local project creation remains usable when the API/database is offline.
+    }
+  }
+
+  async function fetchProjectFilterOptions(): Promise<void> {
+    try {
+      const { data } = await axios.get<ProjectFilterOptions>(`${BASE}/project/filter-options`)
+      projectFilterOptions.value = {
+        locations: data.locations ?? [],
+        dates: data.dates ?? [],
+        perspectives: data.perspectives ?? [],
+      }
+    } catch {
+      projectFilterOptions.value = { locations: [], dates: [], perspectives: [] }
+    }
+  }
 
   function resetProjectScopedState() {
     ingestResult.value = null
@@ -84,14 +134,16 @@ export function useRag() {
   }
 
   function createProject(name: string, meta: DocMetadata): Project {
+    const normalizedMeta = normalizeMeta(meta)
     const project: Project = {
       id: `proj_${Date.now()}`,
       name: name.trim(),
-      meta,
+      meta: normalizedMeta,
       createdAt: Date.now(),
     }
     projects.value.push(project)
     saveProjects(projects.value)
+    void persistProject(project)
     switchProject(project.id)
     return project
   }
@@ -118,8 +170,9 @@ export function useRag() {
   function updateProject(id: string, name: string, meta: DocMetadata) {
     const idx = projects.value.findIndex((p) => p.id === id)
     if (idx !== -1) {
-      projects.value[idx] = { ...projects.value[idx], name, meta }
+      projects.value[idx] = { ...projects.value[idx], name, meta: normalizeMeta(meta) }
       saveProjects(projects.value)
+      void persistProject(projects.value[idx])
     }
   }
 
@@ -249,6 +302,7 @@ export function useRag() {
     form.append('project_id', activeProjectId.value)
     form.append('region', project?.meta.region ?? '')
     form.append('year', project?.meta.year != null ? String(project.meta.year) : '')
+    form.append('date', project?.meta.date ?? '')
     form.append('perspective', project?.meta.perspective ?? '')
 
     try {
@@ -436,6 +490,7 @@ export function useRag() {
     queryResult,
     umapResult,
     graphAnalysisResult,
+    projectFilterOptions,
     projectFiles,
     manualChunks,
     error,
@@ -443,6 +498,7 @@ export function useRag() {
     activeProjectId,
     activeProject,
     createProject,
+    fetchProjectFilterOptions,
     switchProject,
     deleteProject,
     updateProject,

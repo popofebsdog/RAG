@@ -15,6 +15,7 @@ frontend/dist/
 
 # Runtime/vector stores and generated caches
 qdrant_data/
+postgres_data/
 backend/qdrant_data/
 backend/data/
 backend/source_cache/

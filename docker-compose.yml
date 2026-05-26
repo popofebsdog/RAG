@@ -1,4 +1,21 @@
 services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: visual_rag
+      POSTGRES_USER: visual_rag
+      POSTGRES_PASSWORD: visual_rag_password
+    ports:
+      - "55432:5432"
+    volumes:
+      - ./postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U visual_rag -d visual_rag"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
   qdrant:
     image: qdrant/qdrant:latest
     ports:

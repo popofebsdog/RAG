@@ -37,8 +37,9 @@
           >{{ p.name }}</p>
           <p class="text-[11px] truncate leading-tight mt-0.5 text-left" style="color:#667085">
             <span v-if="p.meta.region">{{ p.meta.region }}</span>
-            <span v-if="p.meta.year"> · {{ p.meta.year }}</span>
-            <span v-if="!p.meta.region && !p.meta.year">{{ lang === 'zh' ? '無描述' : 'No metadata' }}</span>
+            <span v-if="p.meta.date"> · {{ p.meta.date }}</span>
+            <span v-else-if="p.meta.year"> · {{ p.meta.year }}</span>
+            <span v-if="!p.meta.region && !p.meta.date && !p.meta.year">{{ lang === 'zh' ? '無描述' : 'No metadata' }}</span>
           </p>
         </div>
 
@@ -73,17 +74,24 @@
           @keydown.esc="showCreate = false"
         />
         <div class="grid grid-cols-2 gap-1.5">
-          <input
+          <select
             v-model="newRegion"
-            :placeholder="lang === 'zh' ? '地區' : 'Region'"
             class="form-input text-[11px]"
-          />
-          <input
-            v-model="newYear"
-            type="number"
-            :placeholder="lang === 'zh' ? '年份' : 'Year'"
+          >
+            <option value="">{{ lang === 'zh' ? '地點篩選' : 'Location' }}</option>
+            <option v-for="option in locationOptions" :key="option.value" :value="option.value">
+              {{ option.label }}
+            </option>
+          </select>
+          <select
+            v-model="newDate"
             class="form-input text-[11px]"
-          />
+          >
+            <option value="">{{ lang === 'zh' ? '日期篩選' : 'Date' }}</option>
+            <option v-for="option in dateOptions" :key="option.value" :value="option.value">
+              {{ option.label }}
+            </option>
+          </select>
         </div>
         <div class="flex gap-1.5">
           <button
@@ -108,11 +116,12 @@
 
 <script setup lang="ts">
 import { ref, computed, nextTick, watch } from 'vue'
-import type { Project, DocMetadata } from '../../types/rag'
+import type { Project, DocMetadata, ProjectFilterOptions, ProjectOption } from '../../types/rag'
 
 const props = defineProps<{
   projects: Project[]
   activeProjectId: string | null
+  filterOptions?: ProjectFilterOptions
   lang?: 'en' | 'zh'
 }>()
 
@@ -129,7 +138,19 @@ const nameInput = ref<HTMLInputElement | null>(null)
 
 const newName = ref('')
 const newRegion = ref('')
-const newYear = ref('')
+const newDate = ref('')
+
+const fallbackLocations: ProjectOption[] = [
+  { value: '台2線70.1K 平浪橋南側', label: '台2線70.1K 平浪橋南側' },
+  { value: '龍門', label: '龍門' },
+]
+const fallbackDates: ProjectOption[] = [
+  { value: '2024-06-03', label: '2024-06-03 崩塌發生' },
+  { value: '2024-06-06', label: '2024-06-06 報告日期' },
+]
+
+const locationOptions = computed(() => props.filterOptions?.locations?.length ? props.filterOptions.locations : fallbackLocations)
+const dateOptions = computed(() => props.filterOptions?.dates?.length ? props.filterOptions.dates : fallbackDates)
 
 watch(showCreate, async (v) => {
   if (v) {
@@ -140,14 +161,16 @@ watch(showCreate, async (v) => {
 
 function submitCreate() {
   if (!newName.value.trim()) return
-  const y = parseInt(newYear.value)
+  const yearText = newDate.value.match(/^\d{4}/)?.[0]
+  const year = yearText ? parseInt(yearText, 10) : undefined
   emit('create', newName.value.trim(), {
-    region: newRegion.value.trim() || undefined,
-    year: isNaN(y) ? undefined : y,
+    region: newRegion.value || undefined,
+    date: newDate.value || undefined,
+    year,
   })
   newName.value = ''
   newRegion.value = ''
-  newYear.value = ''
+  newDate.value = ''
   showCreate.value = false
 }
 </script>

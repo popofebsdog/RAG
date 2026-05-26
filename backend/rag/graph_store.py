@@ -7,6 +7,8 @@ import shutil
 import time
 from typing import Any
 
+from . import postgres_store
+
 _BASE_DIR = os.path.join(os.path.dirname(__file__), "..", "graphs_cache")
 
 
@@ -30,6 +32,7 @@ def save_graph(project_id: str, graph_name: str, data: dict[str, Any]) -> str:
     path = os.path.join(_project_dir(project_id), f"{_safe(graph_name)}_latest.json")
     with open(path, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2, default=str)
+    postgres_store.save_graph_export(project_id, graph_name, os.path.basename(path), data)
     return path
 
 

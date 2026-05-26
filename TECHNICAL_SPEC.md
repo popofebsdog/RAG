@@ -199,6 +199,30 @@ Graph JSON 會輸出至：
 backend/graphs_cache/{project_id}/
 ```
 
+同時，graph export 的 metadata 會寫入 PostgreSQL `graph_exports`，包含 graph name、檔名、node count、edge count 與更新時間。完整 JSON 仍保留為檔案，避免大型 graph blob 造成資料庫膨脹。
+
+## 7. 正式維運資料庫架構
+
+本系統採用 PostgreSQL + Qdrant 混合式架構：
+
+| 資料類型 | 儲存位置 | 說明 |
+|---|---|---|
+| Project / Document metadata | PostgreSQL | 專案、文件、頁數、chunk 數、區域、年份、視角 |
+| Chunk / Node metadata | PostgreSQL | chunk id、label、text、source page、source doc、node type、hazard tags |
+| Relation | PostgreSQL | from/to chunk、label、weight、vectorized 狀態；具唯一索引防重複 |
+| Query / anomaly log | PostgreSQL | 問題、回答、router、retrieved chunks、anomalies |
+| Text / relation / image vectors | Qdrant | similarity retrieval 與 embedding space |
+| PDF 原檔與 VLM/OCR 中間產物 | 檔案系統 / Object Storage | 不放入 PostgreSQL，正式環境需掛載持久化 volume |
+
+啟動時 FastAPI 會依 `DATABASE_URL` 自動初始化 PostgreSQL schema。若未設定 `DATABASE_URL`，系統會保留本機 JSON fallback，方便 demo；正式維運環境應一律設定 `DATABASE_URL`。
+
+核心環境變數：
+
+```env
+DATABASE_URL=postgresql://visual_rag:visual_rag_password@localhost:55432/visual_rag
+QDRANT_URL=http://localhost:6333
+```
+
 目前支援以下 latest 檔：
 
 | 檔名 | 產生時機 | 說明 |
@@ -254,6 +278,7 @@ Form fields：
 | `project_id` | string | `default` | 專案 ID |
 | `region` | string | empty | 地區 metadata |
 | `year` | string | empty | 年份 metadata |
+| `date` | string | empty | 日期 metadata，來自專案篩選下拉選單 |
 | `perspective` | string | empty | 視角 metadata |
 
 Response：`IngestResponse`
@@ -268,6 +293,44 @@ Response：`IngestResponse`
 ```
 
 ### 7.3 Project and Files
+
+#### GET `/project/filter-options`
+
+用途：取得建立專案時的地點、日期與視角下拉選項。現階段由 `backend/config/project_filter_options.json` 提供，之後可替換為外部 API 回傳 JSON。
+
+Response：
+
+```json
+{
+  "locations": [{ "value": "台2線70.1K 平浪橋南側", "label": "台2線70.1K 平浪橋南側", "metadata": {} }],
+  "dates": [{ "value": "2024-06-03", "label": "2024-06-03 崩塌發生", "metadata": {} }],
+  "perspectives": [{ "value": "地質調查", "label": "地質調查", "metadata": {} }]
+}
+```
+
+#### POST `/projects/upsert`
+
+用途：建立或更新專案 metadata。前端建立專案時會呼叫此端點，將地點、日期、年份、視角寫入 PostgreSQL `projects.metadata`；這些欄位也是未來外部 JSON/API 節點來源的篩選條件。
+
+Request：
+
+```json
+{
+  "project_id": "proj_1770000000",
+  "name": "台2線 70.1K",
+  "region": "台2線70.1K 平浪橋南側",
+  "date": "2024-06-03",
+  "year": 2024,
+  "perspective": "地質調查",
+  "metadata": {}
+}
+```
+
+Response：
+
+```json
+{ "status": "ok", "project_id": "proj_1770000000" }
+```
 
 #### GET `/project/files`
 
@@ -692,4 +755,3 @@ Response：`GraphAnalysisResponse`
 3. 預期後端回傳 409，前端顯示已存在。
 4. 調整 relation weight。
 5. 重新整理圖分析，確認線條深淺變化。
-

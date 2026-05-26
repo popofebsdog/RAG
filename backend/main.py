@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, HTTPException, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 load_dotenv(override=True)
 
@@ -36,6 +36,7 @@ from rag.markdown_store import (
 )
 from rag.ocr_store import clear as clear_ocr, get_ocr, remove_doc as remove_ocr, store_ocr
 from rag.page_store import get_pages, list_docs as list_page_docs, remove_doc as remove_pages, store_pages, clear as clear_pages
+from rag import postgres_store
 from rag.qdrant_store import DocMeta, QdrantStore, get_store, get_image_store
 from rag.relations_store import (
     add_relation,
@@ -50,6 +51,7 @@ from rag.source_store import clear as clear_sources, get_pdf_path, remove_doc as
 from rag.umap_analysis import compute_umap
 
 app = FastAPI(title="Visual RAG API")
+PROJECT_FILTER_OPTIONS_PATH = os.path.join(os.path.dirname(__file__), "config", "project_filter_options.json")
 
 app.add_middleware(
     CORSMiddleware,
@@ -61,6 +63,7 @@ app.add_middleware(
 
 @app.on_event("startup")
 def warm_qdrant_clients() -> None:
+    postgres_store.init_schema()
     # Qdrant local mode uses a file lock and qdrant-client imports a large model
     # surface. Warm both collections serially so the first parallel browser
     # requests don't race module import or open separate local clients.
@@ -93,6 +96,28 @@ class DocInfo(BaseModel):
 class ProjectFilesResponse(BaseModel):
     files: list[DocInfo]
     total_chunks: int
+
+
+class ProjectOption(BaseModel):
+    value: str
+    label: str
+    metadata: dict = Field(default_factory=dict)
+
+
+class ProjectFilterOptions(BaseModel):
+    locations: list[ProjectOption] = Field(default_factory=list)
+    dates: list[ProjectOption] = Field(default_factory=list)
+    perspectives: list[ProjectOption] = Field(default_factory=list)
+
+
+class ProjectUpsertRequest(BaseModel):
+    project_id: str
+    name: str
+    region: str | None = None
+    year: int | None = None
+    date: str | None = None
+    perspective: str | None = None
+    metadata: dict = Field(default_factory=dict)
 
 
 class IngestResponse(BaseModel):
@@ -572,6 +597,39 @@ def health():
     return {"status": "ok", "indexed_chunks": store.chunk_count}
 
 
+def _load_project_filter_options() -> ProjectFilterOptions:
+    try:
+        with open(PROJECT_FILTER_OPTIONS_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        data = {"locations": [], "dates": [], "perspectives": []}
+    return ProjectFilterOptions(**data)
+
+
+@app.get("/project/filter-options", response_model=ProjectFilterOptions)
+def project_filter_options():
+    """Dropdown source for project metadata; can be swapped to an external API later."""
+    return _load_project_filter_options()
+
+
+@app.post("/projects/upsert")
+def upsert_project(req: ProjectUpsertRequest):
+    metadata = {
+        **(req.metadata or {}),
+        "region": req.region,
+        "year": req.year,
+        "date": req.date,
+        "perspective": req.perspective,
+        "external_node_source": {
+            "enabled": bool(req.region or req.date),
+            "location": req.region,
+            "date": req.date,
+        },
+    }
+    postgres_store.ensure_project(req.project_id, req.name, metadata=metadata)
+    return {"status": "ok", "project_id": req.project_id}
+
+
 @app.post("/ingest", response_model=IngestResponse)
 async def ingest(
     file: Annotated[UploadFile, File()],
@@ -582,6 +640,7 @@ async def ingest(
     project_id: str = Form("default"),
     region: str = Form(""),
     year: str = Form(""),
+    date: str = Form(""),
     perspective: str = Form(""),
 ):
     if not file.filename or not file.filename.lower().endswith(".pdf"):
@@ -630,7 +689,6 @@ async def ingest(
             perspective=perspective or None,
             project_id=project_id,
         )
-
         if mode == "replace":
             clear_relations(project_id)
             clear_graphs(project_id)
@@ -650,6 +708,17 @@ async def ingest(
                 remove_ocr(file.filename, project_id=project_id)
 
         store_pdf(file.filename, contents, project_id=project_id)
+        postgres_store.ensure_project(project_id)
+        postgres_store.upsert_document(
+            project_id,
+            file.filename,
+            region=meta.region,
+            year=meta.year,
+            perspective=meta.perspective,
+            total_pages=len(pages),
+            chunk_count=len(chunks),
+            metadata={"loader_type": loader_type, "chunk_strategy": chunk_strategy, "date": date or None},
+        )
         store.upsert(chunks, embeddings, meta)
         store_pages(file.filename, pages, project_id=project_id)
         store_markdown(file.filename, clean_markdown, anchor_records, project_id=project_id)
@@ -685,10 +754,17 @@ def project_files(project_id: str = "default"):
     store = get_store()
     qdrant_docs = set(store.docs(project_id=project_id))
     page_docs = set(list_page_docs(project_id=project_id))
-    all_docs = qdrant_docs | page_docs
+    pg_docs = {doc["filename"]: doc for doc in postgres_store.list_documents(project_id)}
+    all_docs = qdrant_docs | page_docs | set(pg_docs)
 
     files: list[DocInfo] = [
-        DocInfo(filename=doc, chunk_count=store.doc_chunk_count(doc, project_id=project_id))
+        DocInfo(
+            filename=doc,
+            chunk_count=int(pg_docs.get(doc, {}).get("chunk_count") or store.doc_chunk_count(doc, project_id=project_id)),
+            region=pg_docs.get(doc, {}).get("region"),
+            year=pg_docs.get(doc, {}).get("year"),
+            perspective=pg_docs.get(doc, {}).get("perspective"),
+        )
         for doc in all_docs
     ]
 
@@ -1171,6 +1247,15 @@ def query(req: QueryRequest):
         router=retrieval.router,
     )
     save_graph(req.project_id, "query_graph", response.graph_data.model_dump())
+    postgres_store.save_query_log(
+        req.project_id,
+        req.question,
+        answer,
+        top_k=req.top_k,
+        router=retrieval.router,
+        retrieved_chunks=[chunk.model_dump() for chunk in retrieved],
+        anomalies=[flag.model_dump() for flag in anomalies],
+    )
     return response
 
 
