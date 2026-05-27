@@ -88,7 +88,7 @@
       </div>
 
       <p class="text-center text-xs text-slate-700">
-        專案資訊會保存為後續圖譜與外部資料節點的篩選條件
+        專案資訊會保存為後續知識圖譜與外部資料知識節點的篩選條件
       </p>
     </div>
   </div>

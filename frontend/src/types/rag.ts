@@ -51,6 +51,35 @@ export interface IngestResponse {
   chunks: ChunkInfo[]
 }
 
+export interface CandidateNode {
+  id: string
+  kind: 'knowledge' | string
+  label: string
+  text: string
+  source_page: number
+  source_doc: string
+  source_anchor?: string | null
+  approved: boolean
+}
+
+export interface CandidateRelation {
+  id: string
+  source_node_id: string
+  target_node_id: string
+  label: string
+  weight: number
+  approved: boolean
+}
+
+export interface IngestPreviewResponse {
+  preview_id: string
+  filename: string
+  total_pages: number
+  total_nodes: number
+  nodes: CandidateNode[]
+  relations: CandidateRelation[]
+}
+
 export interface RetrievedChunk {
   chunk_id: string
   text: string

@@ -13,14 +13,14 @@
 
     <!-- Loading -->
     <div v-if="loading" class="absolute inset-0 flex items-center justify-center">
-      <div class="text-[13px] animate-pulse" style="color:#6B6660">{{ lang === 'zh' ? '建立圖譜中…' : 'Building graph…' }}</div>
+      <div class="text-[13px] animate-pulse" style="color:#6B6660">{{ lang === 'zh' ? '建立知識圖譜中…' : 'Building knowledge graph…' }}</div>
     </div>
 
     <div ref="cyContainer" class="w-full h-full" />
     <div v-if="data && !selected" class="graph-legend" aria-label="線條說明">
       <div class="legend-item">
         <span class="legend-line legend-manual" />
-        <span>{{ lang === 'zh' ? '知識關係' : 'Knowledge relation' }}</span>
+        <span>{{ lang === 'zh' ? '節點關係' : 'Node relation' }}</span>
       </div>
       <div class="legend-item">
         <span class="legend-line legend-context" />
@@ -47,7 +47,7 @@
                     background: selected.node_type === 'relation' ? '#EAF1FA' : selected.is_manual ? '#FFF7ED' : '#F6F8FB',
                   }"
                 >
-                  {{ selected.node_type }}
+                  {{ displayNodeType(selected) }}
                 </span>
                 <span class="min-w-0 truncate font-semibold text-[13px]" style="color:#2C2926">{{ displayNodeTitle(selected) }}</span>
               </div>
@@ -102,7 +102,7 @@
               />
             </div>
             <div v-else class="flex h-full min-h-[260px] items-center justify-center px-4 text-center text-[12px]" style="color:#667085">
-              {{ lang === 'zh' ? '這個節點沒有可定位的 PDF 頁面' : 'This node has no PDF source location' }}
+              {{ lang === 'zh' ? '這個知識節點沒有可定位的 PDF 頁面' : 'This knowledge node has no PDF source location' }}
             </div>
           </div>
         </div>
@@ -192,6 +192,11 @@ function displayNodeLabel(node: GraphAnalysisNode): string {
 
 function displayNodeTitle(node: GraphAnalysisNode): string {
   return displayNodeLabel(node)
+}
+
+function displayNodeType(node: GraphAnalysisNode): string {
+  if (node.node_type === 'relation') return langText(props.lang, '節點關係', 'Node relation')
+  return langText(props.lang, '知識節點', 'Knowledge node')
 }
 
 function refitGraph() {
@@ -360,8 +365,7 @@ function renderGraph(data: GraphAnalysisResponse) {
   const knowledgeNodes = data.nodes
     .filter((node) => node.node_type !== 'relation' && node.is_manual)
     .sort(compareNodeOrder)
-  const connectedKnowledgeNodes = knowledgeNodes.filter((node) => relationNodeIds.has(node.id))
-  const visibleNodes = connectedKnowledgeNodes.length > 0 ? connectedKnowledgeNodes : knowledgeNodes
+  const visibleNodes = knowledgeNodes
   const nodeIds = new Set(visibleNodes.map((node) => node.id))
   const nodesById = new Map(visibleNodes.map((node) => [node.id, node]))
   const connectedPairs = new Set<string>()

@@ -115,9 +115,9 @@ const emit = defineEmits<{
 }>()
 
 const TABS: { id: VisualizationTab; label: string; labelZh: string; icon: object }[] = [
-  { id: 'graph-analysis',  label: 'Graph Edit',     labelZh: '圖分析與編輯', icon: IconAnalysis },
+  { id: 'graph-analysis',  label: 'Knowledge Graph Edit', labelZh: '知識圖譜編輯', icon: IconAnalysis },
   { id: 'knowledge-graph', label: 'Knowledge Graph', labelZh: '知識圖譜', icon: IconGraph },
-  { id: 'graph-json',      label: 'Graph JSON',      labelZh: 'Graph JSON', icon: IconJson },
+  { id: 'graph-json',      label: 'Knowledge Graph JSON', labelZh: '知識圖譜 JSON', icon: IconJson },
 ]
 
 const activeTab = ref<VisualizationTab>('graph-analysis')

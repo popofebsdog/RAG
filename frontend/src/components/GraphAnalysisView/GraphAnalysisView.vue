@@ -31,14 +31,14 @@
         </section>
 
         <section>
-          <p class="section-label">{{ lang === 'zh' ? '選取節點' : 'Selected Node' }}</p>
+          <p class="section-label">{{ lang === 'zh' ? '選取知識節點' : 'Selected Knowledge Node' }}</p>
           <div v-if="selected" class="rounded-lg border p-3 space-y-2" style="border-color:#D7DEE8;background:#FFFFFF">
             <div class="flex items-start justify-between gap-2">
               <div class="min-w-0">
                 <p class="text-[14px] font-semibold truncate" style="color:#172033">{{ nodeTitle(selected.id) }}</p>
                 <p class="text-[12px] truncate" style="color:#667085">{{ selected.id }}</p>
               </div>
-              <span class="node-type">{{ selected.node_type }}</span>
+              <span class="node-type">{{ displayNodeType(selected) }}</span>
             </div>
             <div class="flex flex-wrap gap-1.5">
               <span v-if="selected.source_doc" class="meta-chip">{{ selected.source_doc }}</span>
@@ -47,29 +47,29 @@
             </div>
             <p class="line-clamp-3 text-[13px] leading-relaxed" style="color:#41546F">{{ selected.text }}</p>
             <div class="grid grid-cols-2 gap-2">
-              <button class="action-button" @click="fromId = selected.id">{{ lang === 'zh' ? '設為起點' : 'Set source' }}</button>
-              <button class="action-button" @click="toId = selected.id">{{ lang === 'zh' ? '設為終點' : 'Set target' }}</button>
+              <button class="action-button" @click="fromId = selected.id">{{ lang === 'zh' ? '設為起點知識節點' : 'Set source' }}</button>
+              <button class="action-button" @click="toId = selected.id">{{ lang === 'zh' ? '設為終點知識節點' : 'Set target' }}</button>
             </div>
           </div>
           <div v-else class="empty-box">
-            {{ lang === 'zh' ? '尚未選取節點' : 'No node selected' }}
+            {{ lang === 'zh' ? '尚未選取知識節點' : 'No knowledge node selected' }}
           </div>
         </section>
 
         <section>
-          <p class="section-label">{{ lang === 'zh' ? '建立關係' : 'Create Relation' }}</p>
+          <p class="section-label">{{ lang === 'zh' ? '建立節點關係' : 'Create Node Relation' }}</p>
           <div class="rounded-lg border p-3 space-y-3" style="border-color:#D7DEE8;background:#FFFFFF">
             <div class="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
-              <EndpointBox :label="lang === 'zh' ? '起點' : 'From'" :value="fromId ? nodeTitle(fromId) : '-'" />
+              <EndpointBox :label="lang === 'zh' ? '起點知識節點' : 'Source node'" :value="fromId ? nodeTitle(fromId) : '-'" />
               <span style="color:#667085">→</span>
-              <EndpointBox :label="lang === 'zh' ? '終點' : 'To'" :value="toId ? nodeTitle(toId) : '-'" />
+              <EndpointBox :label="lang === 'zh' ? '終點知識節點' : 'Target node'" :value="toId ? nodeTitle(toId) : '-'" />
             </div>
 
             <input
               v-model="relationLabel"
               class="w-full rounded-lg border px-3 py-2 text-[14px] outline-none"
               style="border-color:#D7DEE8;background:#F8FAFC;color:#172033"
-              :placeholder="lang === 'zh' ? '關係標籤，例如：導致、支援、矛盾' : 'Relation label, e.g. causes, supports, contradicts'"
+              :placeholder="lang === 'zh' ? '節點關係標籤，例如：導致、支援、矛盾' : 'Node relation label, e.g. causes, supports, contradicts'"
             />
             <label class="flex items-center gap-3 text-[12px]" style="color:#667085">
               <span class="shrink-0">{{ lang === 'zh' ? '權重' : 'Weight' }}</span>
@@ -77,7 +77,7 @@
               <span class="w-10 text-right tabular-nums" style="color:#172033">{{ relationWeight.toFixed(2) }}</span>
             </label>
             <div v-if="duplicateRelation" class="notice-box">
-              {{ lang === 'zh' ? '這組起點、終點與標籤已存在，請調整方向或標籤。' : 'This source, target, and label already exists.' }}
+              {{ lang === 'zh' ? '這組起點、終點與節點關係標籤已存在，請調整方向或標籤。' : 'This source, target, and node relation label already exists.' }}
             </div>
             <div v-if="relationError" class="notice-box">
               {{ relationError }}
@@ -94,7 +94,7 @@
 
         <section>
           <div class="flex items-center justify-between">
-            <p class="section-label mb-0">{{ lang === 'zh' ? '已建立關係' : 'Relations' }}</p>
+            <p class="section-label mb-0">{{ lang === 'zh' ? '已建立節點關係' : 'Node Relations' }}</p>
             <span class="text-[12px]" style="color:#667085">{{ visibleManualEdges.length }}</span>
           </div>
           <div v-if="visibleManualEdges.length" class="mt-2 space-y-2">
@@ -109,7 +109,7 @@
                   <p class="text-[13px] font-semibold truncate" style="color:#172033">{{ rel.label }}</p>
                   <p class="text-[12px] truncate" style="color:#667085">{{ nodeTitle(rel.from_chunk_id) }} → {{ nodeTitle(rel.to_chunk_id) }}</p>
                 </div>
-                <button class="icon-button" :aria-label="lang === 'zh' ? '刪除關係' : 'Delete relation'" @click="removeRelation(rel.id)">x</button>
+                <button class="icon-button" :aria-label="lang === 'zh' ? '刪除節點關係' : 'Delete node relation'" @click="removeRelation(rel.id)">x</button>
               </div>
               <label class="mt-2 flex items-center gap-2 text-[12px]" style="color:#667085">
                 <span>{{ lang === 'zh' ? '權重' : 'Weight' }}</span>
@@ -126,7 +126,7 @@
               </label>
             </div>
           </div>
-          <div v-else class="empty-box mt-2">{{ lang === 'zh' ? '目前節點尚無可編輯關係' : 'No relations for the current nodes' }}</div>
+          <div v-else class="empty-box mt-2">{{ lang === 'zh' ? '目前知識節點尚無可編輯節點關係' : 'No node relations for the current knowledge nodes' }}</div>
         </section>
 
       </div>
@@ -134,16 +134,16 @@
 
     <main class="flex-1 relative">
       <div v-if="!data && !loading" class="absolute inset-0 flex flex-col items-center justify-center gap-3">
-        <p class="text-[14px]" style="color:#667085">{{ lang === 'zh' ? '上傳或建立節點後會顯示圖分析' : 'Graph analysis appears after nodes are available' }}</p>
+        <p class="text-[14px]" style="color:#667085">{{ lang === 'zh' ? '上傳或建立知識節點後會顯示知識圖譜' : 'Knowledge graph appears after knowledge nodes are available' }}</p>
       </div>
       <div v-if="loading" class="absolute inset-0 flex items-center justify-center">
-        <div class="text-[14px] animate-pulse" style="color:#41546F">{{ lang === 'zh' ? '正在分析圖結構' : 'Analyzing graph structure' }}</div>
+        <div class="text-[14px] animate-pulse" style="color:#41546F">{{ lang === 'zh' ? '正在分析知識圖譜結構' : 'Analyzing knowledge graph structure' }}</div>
       </div>
       <div ref="cyContainer" class="w-full h-full" />
       <div v-if="data" class="graph-legend" aria-label="線條說明">
         <div class="legend-item">
           <span class="legend-line legend-manual" />
-          <span>{{ lang === 'zh' ? '知識關係' : 'Knowledge relation' }}</span>
+          <span>{{ lang === 'zh' ? '節點關係' : 'Node relation' }}</span>
         </div>
         <div class="legend-item">
           <span class="legend-line legend-context" />
@@ -238,14 +238,7 @@ const displayNodes = computed<GraphAnalysisNode[]>(() => {
 const nodeMap = computed(() => new Map(displayNodes.value.map((node) => [node.id, node])))
 const manualLabelMap = computed(() => new Map(props.manualChunks.map((node) => [node.chunk_id, node.label])))
 const graphNodes = computed<GraphAnalysisNode[]>(() => {
-  const nodes = [...displayNodes.value].sort(compareNodeOrder)
-  const relationNodeIds = new Set<string>()
-  props.relations.forEach((rel) => {
-    relationNodeIds.add(rel.from_chunk_id)
-    relationNodeIds.add(rel.to_chunk_id)
-  })
-  const connected = nodes.filter((node) => relationNodeIds.has(node.id))
-  return connected.length > 0 ? connected : nodes
+  return [...displayNodes.value].sort(compareNodeOrder)
 })
 const visibleNodeIds = computed(() => new Set(graphNodes.value.map((node) => node.id)))
 const visibleManualEdges = computed(() =>
@@ -270,7 +263,7 @@ const canCreateRelation = computed(() =>
 )
 const submitButtonLabel = computed(() => {
   if (submitting.value) return props.lang === 'zh' ? '建立中' : 'Creating'
-  if (duplicateRelation.value) return props.lang === 'zh' ? '已存在相同關係' : 'Relation exists'
+  if (duplicateRelation.value) return props.lang === 'zh' ? '已存在相同節點關係' : 'Node relation exists'
   return props.lang === 'zh' ? '建立並寫入向量庫' : 'Create and vectorize'
 })
 
@@ -336,6 +329,11 @@ function nodeTitle(id: string) {
   return manualLabelMap.value.get(id) || node?.keywords || node?.label || id
 }
 
+function displayNodeType(node: GraphAnalysisNode): string {
+  if (node.node_type === 'relation') return props.lang === 'zh' ? '節點關係' : 'Node relation'
+  return props.lang === 'zh' ? '知識節點' : 'Knowledge node'
+}
+
 function anomalyLabel(type: string) {
   const zh: Record<string, string> = {
     out_of_domain: '主題外問題',
@@ -356,8 +354,8 @@ function normalizeAnomaly(item: QueryResponse['anomalies'][number]) {
       ...item,
       type: 'insufficient_evidence',
       message: props.lang === 'zh'
-        ? '查詢缺少災害圖譜中的明確對應證據'
-        : 'The query lacks clear supporting evidence in the disaster graph',
+        ? '查詢缺少災害知識圖譜中的明確對應證據'
+        : 'The query lacks clear supporting evidence in the disaster knowledge graph',
     }
   }
   if (item.message.includes('最高相似度') || item.message.includes('知識庫差異過大')) {
@@ -534,8 +532,8 @@ async function submitRelation() {
     emit('refresh')
   } catch {
     relationError.value = props.lang === 'zh'
-      ? '關係建立失敗，可能已存在相同關係。'
-      : 'Could not create relation. It may already exist.'
+      ? '節點關係建立失敗，可能已存在相同節點關係。'
+      : 'Could not create node relation. It may already exist.'
   } finally {
     submitting.value = false
   }

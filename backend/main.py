@@ -21,7 +21,7 @@ from rag.anomaly import detect_graph_out_of_domain, detect_out_of_domain, detect
 from rag.graph_analysis import GraphAnalysisResult, build_similarity_graph
 from rag.graph_store import clear_graphs, list_graphs, read_graph, save_graph
 from rag.image_store import clear as clear_images, get_images, remove_doc as remove_images, store_images
-from rag.knowledge_extraction import ExtractedKnowledgeGraph, extract_knowledge_graph
+from rag.knowledge_extraction import ExtractedKnowledgeGraph, ExtractedNode, ExtractedRelation, extract_knowledge_graph
 from rag.keyword_extract import extract_keywords
 from rag.llm import generate_answer
 from rag.loader import PyMuPDFLoader, get_loader
@@ -52,6 +52,7 @@ from rag.umap_analysis import compute_umap
 
 app = FastAPI(title="Visual RAG API")
 PROJECT_FILTER_OPTIONS_PATH = os.path.join(os.path.dirname(__file__), "config", "project_filter_options.json")
+PENDING_INGEST_DIR = os.path.join(os.path.dirname(__file__), "data", "pending_ingests")
 
 app.add_middleware(
     CORSMiddleware,
@@ -125,6 +126,48 @@ class IngestResponse(BaseModel):
     total_pages: int
     total_chunks: int
     chunks: list[ChunkInfo]
+
+
+class CandidateNode(BaseModel):
+    id: str
+    kind: str = "chunk"  # "chunk" | "knowledge"
+    label: str
+    text: str
+    source_page: int = 0
+    source_doc: str = ""
+    source_anchor: str | None = None
+    approved: bool = True
+
+
+class CandidateRelation(BaseModel):
+    id: str
+    source_node_id: str
+    target_node_id: str
+    label: str
+    weight: float = 0.75
+    approved: bool = True
+
+
+class IngestPreviewResponse(BaseModel):
+    preview_id: str
+    filename: str
+    total_pages: int
+    total_nodes: int
+    nodes: list[CandidateNode]
+    relations: list[CandidateRelation]
+
+
+class IngestCommitRequest(BaseModel):
+    preview_id: str
+    project_id: str = "default"
+    filename: str
+    nodes: list[CandidateNode]
+    relations: list[CandidateRelation] = Field(default_factory=list)
+    mode: str = "append"
+    region: str | None = None
+    year: int | None = None
+    date: str | None = None
+    perspective: str | None = None
 
 
 class RetrievedChunk(BaseModel):
@@ -606,6 +649,72 @@ def _load_project_filter_options() -> ProjectFilterOptions:
     return ProjectFilterOptions(**data)
 
 
+def _pending_ingest_path(project_id: str, preview_id: str) -> str:
+    safe_project = re.sub(r"[^A-Za-z0-9_.-]", "_", project_id or "default")
+    safe_preview = re.sub(r"[^A-Za-z0-9_.-]", "_", preview_id)
+    return os.path.join(PENDING_INGEST_DIR, safe_project, f"{safe_preview}.json")
+
+
+def _save_pending_ingest(project_id: str, preview_id: str, payload: dict) -> None:
+    path = _pending_ingest_path(project_id, preview_id)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+
+
+def _load_pending_ingest(project_id: str, preview_id: str) -> dict:
+    path = _pending_ingest_path(project_id, preview_id)
+    if not os.path.exists(path):
+        raise HTTPException(404, "Pending ingest preview not found")
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _remove_pending_ingest(project_id: str, preview_id: str) -> None:
+    path = _pending_ingest_path(project_id, preview_id)
+    if os.path.exists(path):
+        os.remove(path)
+
+
+def _build_ingest_candidates(graph: ExtractedKnowledgeGraph, filename: str) -> tuple[list[CandidateNode], list[CandidateRelation]]:
+    nodes: list[CandidateNode] = []
+    label_to_candidate_id: dict[str, str] = {}
+
+    for idx, node in enumerate(graph.nodes):
+        candidate_id = f"knowledge:{idx}"
+        label = node.label.strip() or extract_keywords(node.text)
+        if not label:
+            continue
+        page_num = max(0, int(node.page or 0))
+        nodes.append(CandidateNode(
+            id=candidate_id,
+            kind="knowledge",
+            label=label,
+            text=node.text,
+            source_page=page_num,
+            source_doc=filename,
+            source_anchor=f"^p{page_num}" if page_num else None,
+            approved=True,
+        ))
+        label_to_candidate_id[label] = candidate_id
+
+    relations: list[CandidateRelation] = []
+    for idx, relation in enumerate(graph.relations):
+        source_id = label_to_candidate_id.get(relation.from_label)
+        target_id = label_to_candidate_id.get(relation.to_label)
+        if not source_id or not target_id or source_id == target_id:
+            continue
+        relations.append(CandidateRelation(
+            id=f"relation:{idx}",
+            source_node_id=source_id,
+            target_node_id=target_id,
+            label=relation.label,
+            weight=max(0.0, min(1.0, float(relation.weight))),
+            approved=True,
+        ))
+    return nodes, relations
+
+
 @app.get("/project/filter-options", response_model=ProjectFilterOptions)
 def project_filter_options():
     """Dropdown source for project metadata; can be swapped to an external API later."""
@@ -628,6 +737,209 @@ def upsert_project(req: ProjectUpsertRequest):
     }
     postgres_store.ensure_project(req.project_id, req.name, metadata=metadata)
     return {"status": "ok", "project_id": req.project_id}
+
+
+@app.post("/ingest/preview", response_model=IngestPreviewResponse)
+async def ingest_preview(
+    file: Annotated[UploadFile, File()],
+    loader_type: str = Form("pymupdf4llm"),
+    chunk_mode: str = Form("semantic"),
+    mode: str = Form("append"),
+    chunk_strategy: str = Form("auto"),
+    project_id: str = Form("default"),
+    region: str = Form(""),
+    year: str = Form(""),
+    date: str = Form(""),
+    perspective: str = Form(""),
+):
+    if not file.filename or not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(400, "Only PDF files are accepted")
+
+    contents = await file.read()
+    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+        tmp.write(contents)
+        tmp_path = tmp.name
+
+    try:
+        os.environ["PDF_LOADER"] = loader_type
+        os.environ["CHUNK_MODE"] = chunk_mode
+        loader = get_loader()
+        try:
+            pages = loader.load(tmp_path)
+        except RuntimeError as exc:
+            raise HTTPException(502, str(exc)) from exc
+        if not pages:
+            raise HTTPException(422, "Could not extract text from PDF")
+        pages, clean_markdown, anchor_records = anchor_pages(pages)
+
+        # Keep raw source available during review; graph/vector writes happen only on commit.
+        store_pdf(file.filename, contents, project_id=project_id)
+        store_pages(file.filename, pages, project_id=project_id)
+        store_markdown(file.filename, clean_markdown, anchor_records, project_id=project_id)
+        try:
+            img_loader = PyMuPDFLoader()
+            page_images = img_loader.load_images(tmp_path)
+            store_images(file.filename, page_images, project_id=project_id)
+        except Exception:
+            pass
+
+        extracted_graph = extract_knowledge_graph(pages, file.filename)
+        nodes, relations = _build_ingest_candidates(extracted_graph, file.filename)
+        preview_id = f"preview_{int(time.time() * 1000)}"
+        _save_pending_ingest(project_id, preview_id, {
+            "filename": file.filename,
+            "total_pages": len(pages),
+            "mode": mode,
+            "loader_type": loader_type,
+            "chunk_strategy": chunk_strategy,
+            "region": region or None,
+            "year": int(year) if year.isdigit() else None,
+            "date": date or None,
+            "perspective": perspective or None,
+            "created_at": int(time.time()),
+        })
+        return IngestPreviewResponse(
+            preview_id=preview_id,
+            filename=file.filename,
+            total_pages=len(pages),
+            total_nodes=len(nodes),
+            nodes=nodes,
+            relations=relations,
+        )
+    finally:
+        os.unlink(tmp_path)
+
+
+@app.post("/ingest/commit", response_model=IngestResponse)
+def ingest_commit(req: IngestCommitRequest):
+    pending = _load_pending_ingest(req.project_id, req.preview_id)
+    filename = req.filename or pending.get("filename")
+    if filename != pending.get("filename"):
+        raise HTTPException(400, "Preview filename mismatch")
+
+    store = get_store()
+    meta = DocMeta(
+        region=req.region or pending.get("region"),
+        year=req.year or pending.get("year"),
+        perspective=req.perspective or pending.get("perspective"),
+        project_id=req.project_id,
+    )
+
+    if req.mode == "replace" or pending.get("mode") == "replace":
+        clear_relations(req.project_id)
+        clear_graphs(req.project_id)
+        store.clear(project_id=req.project_id)
+        clear_pages(project_id=req.project_id)
+        clear_markdown(project_id=req.project_id)
+        clear_sources(project_id=req.project_id)
+        clear_ocr(project_id=req.project_id)
+        clear_images(project_id=req.project_id)
+        get_image_store().clear(project_id=req.project_id)
+    elif filename in store.docs(project_id=req.project_id):
+        _remove_doc_graph_artifacts(store, filename, req.project_id)
+        remove_ocr(filename, project_id=req.project_id)
+
+    approved_nodes = [node for node in req.nodes if node.approved and node.text.strip()]
+    auto_chunks: list[Chunk] = []
+    auto_nodes = [node for node in approved_nodes if node.kind != "knowledge"]
+    knowledge_nodes = [node for node in approved_nodes if node.kind == "knowledge"]
+
+    timestamp = int(time.time())
+    for idx, node in enumerate(auto_nodes):
+        chunk_id = f"review:{_slugify(node.label or node.text)}:{timestamp}:{idx}"
+        auto_chunks.append(Chunk(
+            chunk_id=chunk_id,
+            text=node.text.strip(),
+            source_page=max(0, int(node.source_page or 0)),
+            start_char=0,
+            end_char=len(node.text.strip()),
+            source_doc=filename,
+            source_anchor=node.source_anchor or first_anchor(node.text) or (f"^p{int(node.source_page)}" if node.source_page else None),
+        ))
+
+    embeddings = embed_chunks(auto_chunks) if auto_chunks else []
+    if auto_chunks:
+        store.upsert(auto_chunks, embeddings, meta)
+
+    node_id_map: dict[str, str] = {}
+    for idx, node in enumerate(knowledge_nodes):
+        label = node.label.strip() or extract_keywords(node.text)
+        chunk_id = f"manual:{_slugify(label)}:{timestamp + idx}"
+        chunk = Chunk(
+            chunk_id=chunk_id,
+            text=node.text.strip(),
+            source_page=max(0, int(node.source_page or 0)),
+            start_char=0,
+            end_char=len(node.text.strip()),
+            source_doc=filename,
+            source_anchor=node.source_anchor or first_anchor(node.text) or (f"^p{int(node.source_page)}" if node.source_page else None),
+        )
+        store.upsert_manual(chunk, embed_query(f"{label}: {node.text}"), label, meta)
+        node_id_map[node.id] = chunk_id
+
+    existing_relations = list_relations(req.project_id)
+    for relation in req.relations:
+        if not relation.approved:
+            continue
+        from_id = node_id_map.get(relation.source_node_id)
+        to_id = node_id_map.get(relation.target_node_id)
+        if not from_id or not to_id or from_id == to_id:
+            continue
+        label = relation.label.strip()
+        duplicate = any(
+            rel.get("from_chunk_id") == from_id
+            and rel.get("to_chunk_id") == to_id
+            and str(rel.get("label", "")).strip().casefold() == label.casefold()
+            for rel in existing_relations
+        )
+        if duplicate:
+            continue
+        new_relation = add_relation(
+            from_chunk_id=from_id,
+            to_chunk_id=to_id,
+            label=label,
+            weight=max(0.0, min(1.0, relation.weight)),
+            project_id=req.project_id,
+        )
+        existing_relations.append(new_relation)
+        _upsert_relation_vector(new_relation)
+
+    postgres_store.ensure_project(req.project_id)
+    postgres_store.upsert_document(
+        req.project_id,
+        filename,
+        region=meta.region,
+        year=meta.year,
+        perspective=meta.perspective,
+        total_pages=int(pending.get("total_pages") or 0),
+        chunk_count=len(auto_chunks) + len(knowledge_nodes),
+        metadata={
+            "loader_type": pending.get("loader_type"),
+            "chunk_strategy": pending.get("chunk_strategy"),
+            "date": req.date or pending.get("date"),
+            "reviewed": True,
+        },
+    )
+
+    _remove_pending_ingest(req.project_id, req.preview_id)
+    chunk_infos = [
+        ChunkInfo(
+            chunk_id=c.chunk_id,
+            text=c.text,
+            source_page=c.source_page,
+            start_char=c.start_char,
+            end_char=c.end_char,
+            source_doc=c.source_doc,
+            source_anchor=c.source_anchor,
+        )
+        for c in auto_chunks
+    ]
+    return IngestResponse(
+        filename=filename,
+        total_pages=int(pending.get("total_pages") or 0),
+        total_chunks=len(auto_chunks) + len(knowledge_nodes),
+        chunks=chunk_infos,
+    )
 
 
 @app.post("/ingest", response_model=IngestResponse)

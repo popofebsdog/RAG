@@ -226,7 +226,7 @@ def _render_pdf_pages(path: str) -> list[tuple[int, list[str]]]:
     return rendered
 
 
-_VLM_PROMPT_VERSION = "2026-05-19-disaster-kg-v3-tiles"
+_VLM_PROMPT_VERSION = "2026-05-27-disaster-kg-v4-review-nodes"
 
 
 def _vlm_cache_dir() -> str:

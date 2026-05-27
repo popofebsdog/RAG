@@ -2,6 +2,7 @@ import { ref, computed } from 'vue'
 import axios from 'axios'
 import type {
   IngestResponse,
+  IngestPreviewResponse,
   QueryResponse,
   UMAPResponse,
   GraphAnalysisResponse,
@@ -52,6 +53,7 @@ export function useRag() {
   const loadingGraphAnalysis = ref(false)
 
   const ingestResult = ref<IngestResponse | null>(null)
+  const ingestPreview = ref<IngestPreviewResponse | null>(null)
   const queryResult = ref<QueryResponse | null>(null)
   const umapResult = ref<UMAPResponse | null>(null)
   const graphAnalysisResult = ref<GraphAnalysisResponse | null>(null)
@@ -123,6 +125,7 @@ export function useRag() {
 
   function resetProjectScopedState() {
     ingestResult.value = null
+    ingestPreview.value = null
     queryResult.value = null
     umapResult.value = null
     graphAnalysisResult.value = null
@@ -200,6 +203,7 @@ export function useRag() {
       })
       sourceVersion.value = Date.now()
       ingestResult.value = null
+      ingestPreview.value = null
       queryResult.value = null
       umapResult.value = null
       graphAnalysisResult.value = null
@@ -306,8 +310,40 @@ export function useRag() {
     form.append('perspective', project?.meta.perspective ?? '')
 
     try {
-      const { data } = await axios.post<IngestResponse>(`${BASE}/ingest`, form)
+      const { data } = await axios.post<IngestPreviewResponse>(`${BASE}/ingest/preview`, form)
+      ingestPreview.value = data
+      ingestResult.value = null
+      sourceVersion.value = Date.now()
+      queryResult.value = null
+      umapResult.value = null
+      graphAnalysisResult.value = null
+      await fetchProjectFiles()
+    } catch (e: unknown) {
+      error.value = apiErrorMessage(e)
+    } finally {
+      ingesting.value = false
+    }
+  }
+
+  async function commitIngestPreview(preview: IngestPreviewResponse): Promise<void> {
+    const project = activeProject.value
+    ingesting.value = true
+    error.value = null
+    try {
+      const { data } = await axios.post<IngestResponse>(`${BASE}/ingest/commit`, {
+        preview_id: preview.preview_id,
+        project_id: activeProjectId.value ?? 'default',
+        filename: preview.filename,
+        nodes: preview.nodes,
+        relations: preview.relations,
+        mode: 'append',
+        region: project?.meta.region ?? null,
+        year: project?.meta.year ?? null,
+        date: project?.meta.date ?? null,
+        perspective: project?.meta.perspective ?? null,
+      })
       ingestResult.value = data
+      ingestPreview.value = null
       sourceVersion.value = Date.now()
       queryResult.value = null
       umapResult.value = null
@@ -321,6 +357,10 @@ export function useRag() {
     } finally {
       ingesting.value = false
     }
+  }
+
+  function discardIngestPreview(): void {
+    ingestPreview.value = null
   }
 
   // ── manual chunks ─────────────────────────────────────────────────────────
@@ -487,6 +527,7 @@ export function useRag() {
     loadingUmap,
     loadingGraphAnalysis,
     ingestResult,
+    ingestPreview,
     queryResult,
     umapResult,
     graphAnalysisResult,
@@ -503,6 +544,8 @@ export function useRag() {
     deleteProject,
     updateProject,
     ingestPdf,
+    commitIngestPreview,
+    discardIngestPreview,
     removeProjectFile,
     clearProject,
     fetchProjectFiles,

@@ -3,8 +3,8 @@
     <aside class="w-[340px] shrink-0 border-r overflow-hidden flex flex-col" style="border-color:#D7DEE8;background:#F8FAFC">
       <div class="h-[58px] shrink-0 border-b px-4 flex items-center justify-between" style="border-color:#D7DEE8">
         <div>
-          <p class="text-[14px] font-semibold" style="color:#172033">{{ lang === 'zh' ? 'Graph JSON API' : 'Graph JSON API' }}</p>
-          <p class="text-[12px]" style="color:#667085">{{ lang === 'zh' ? '目前專案輸出的圖譜檔案' : 'Exported graph files for this project' }}</p>
+          <p class="text-[14px] font-semibold" style="color:#172033">{{ lang === 'zh' ? '知識圖譜 JSON API' : 'Knowledge Graph JSON API' }}</p>
+          <p class="text-[12px]" style="color:#667085">{{ lang === 'zh' ? '目前專案輸出的知識圖譜檔案' : 'Exported knowledge graph files for this project' }}</p>
         </div>
         <button class="icon-button" :disabled="loading" @click="loadList">
           <span :class="loading ? 'animate-spin inline-block' : ''">↻</span>
@@ -16,14 +16,14 @@
           <div class="method-get">GET</div>
           <div class="min-w-0">
             <p class="endpoint-path">/graphs/json</p>
-            <p class="endpoint-desc">{{ lang === 'zh' ? '列出 project_id 的所有 graph JSON' : 'List graph JSON by project_id' }}</p>
+            <p class="endpoint-desc">{{ lang === 'zh' ? '列出 project_id 的所有知識圖譜 JSON' : 'List knowledge graph JSON by project_id' }}</p>
           </div>
         </div>
         <div class="endpoint-card">
           <div class="method-get">GET</div>
           <div class="min-w-0">
             <p class="endpoint-path">/graphs/json/{filename}</p>
-            <p class="endpoint-desc">{{ lang === 'zh' ? '讀取單一 JSON 內容' : 'Read a graph JSON file' }}</p>
+            <p class="endpoint-desc">{{ lang === 'zh' ? '讀取單一知識圖譜 JSON 內容' : 'Read a knowledge graph JSON file' }}</p>
           </div>
         </div>
       </div>
@@ -32,7 +32,7 @@
         <div v-if="!projectId" class="empty-box">{{ lang === 'zh' ? '尚未選擇專案' : 'No project selected' }}</div>
         <div v-else-if="loading" class="empty-box">{{ lang === 'zh' ? '讀取中' : 'Loading' }}</div>
         <div v-else-if="files.length === 0" class="empty-box">
-          {{ lang === 'zh' ? '目前沒有 graph JSON。重新整理圖分析、知識圖譜或詢問一次後會產生。' : 'No graph JSON yet. Refresh graph views or ask a question to generate files.' }}
+          {{ lang === 'zh' ? '目前沒有知識圖譜 JSON。重新整理知識圖譜或詢問一次後會產生。' : 'No knowledge graph JSON yet. Refresh knowledge graph views or ask a question to generate files.' }}
         </div>
         <button
           v-for="file in files"
@@ -171,15 +171,15 @@ async function copyJson() {
 
 function titleFor(name: string) {
   const zh: Record<string, string> = {
-    graph_analysis: '圖分析與編輯',
+    graph_analysis: '知識圖譜編輯',
     knowledge_graph: '知識圖譜',
-    query_graph: '詢問流程圖',
+    query_graph: '詢問知識圖譜',
     embedding_space: 'Embedding 空間',
   }
   const en: Record<string, string> = {
-    graph_analysis: 'Graph Analysis',
+    graph_analysis: 'Knowledge Graph Edit',
     knowledge_graph: 'Knowledge Graph',
-    query_graph: 'Query Graph',
+    query_graph: 'Query Knowledge Graph',
     embedding_space: 'Embedding Space',
   }
   return props.lang === 'zh' ? (zh[name] ?? name) : (en[name] ?? name)

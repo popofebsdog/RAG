@@ -70,7 +70,7 @@ const ICONS: Record<string, string> = {
 
 const PIPELINE_STEPS = [
   { id: 'pdf', label: 'PDF Document', sublabel: 'Source', type: 'pdf' },
-  { id: 'chunker', label: 'Chunker', sublabel: 'Split text', type: 'chunker' },
+  { id: 'chunker', label: '知識節點抽取', sublabel: '建立知識節點', type: 'chunker' },
   { id: 'embedder', label: 'Embedder', sublabel: 'sentence-transformers', type: 'embedder' },
   { id: 'faiss', label: 'FAISS Index', sublabel: 'Vector store', type: 'faiss' },
   { id: 'query', label: 'User Query', sublabel: 'Input question', type: 'query' },
@@ -90,12 +90,12 @@ const nodes = computed<Node[]>(() => {
 
   if (props.ingestResult) {
     infoMap.pdf = props.ingestResult.filename
-    infoMap.chunker = `${props.ingestResult.total_chunks} chunks`
+    infoMap.chunker = `${props.ingestResult.total_chunks} 知識節點`
     infoMap.faiss = `${props.ingestResult.total_chunks} vectors`
   }
   if (props.queryResult) {
     infoMap.query = props.queryResult.question.slice(0, 30) + '…'
-    infoMap.retriever = `top ${props.queryResult.retrieved_chunks.length} chunks`
+    infoMap.retriever = `top ${props.queryResult.retrieved_chunks.length} 知識節點`
     infoMap.answer = props.queryResult.answer.slice(0, 40) + '…'
   }
 
@@ -126,7 +126,7 @@ const nodes = computed<Node[]>(() => {
         type: 'pipeline',
         position: { x: 700 + i * 180 - 360, y: 420 },
         data: {
-          label: chunk.chunk_id,
+          label: chunk.label || '知識節點',
           sublabel: `p${chunk.source_page} · ${(chunk.score * 100).toFixed(0)}%`,
           type: 'chunk',
           color: '#6366f1',
@@ -144,7 +144,7 @@ const edges = computed<Edge[]>(() => {
   const active = activeIds.value
   const result: Edge[] = [
     { id: 'e-pdf-chunker', source: 'pdf', target: 'chunker', label: 'extract', animated: active.has('chunker'), style: edgeStyle(active.has('chunker')) },
-    { id: 'e-chunker-embed', source: 'chunker', target: 'embedder', label: 'chunks', animated: active.has('embedder'), style: edgeStyle(active.has('embedder')) },
+    { id: 'e-chunker-embed', source: 'chunker', target: 'embedder', label: '知識節點', animated: active.has('embedder'), style: edgeStyle(active.has('embedder')) },
     { id: 'e-embed-faiss', source: 'embedder', target: 'faiss', label: 'vectors', animated: active.has('faiss'), style: edgeStyle(active.has('faiss')) },
     { id: 'e-faiss-retriever', source: 'faiss', target: 'retriever', label: 'search', animated: active.has('retriever'), style: edgeStyle(active.has('retriever')) },
     { id: 'e-query-retriever', source: 'query', target: 'retriever', label: 'embed', animated: active.has('retriever'), style: edgeStyle(active.has('retriever')) },

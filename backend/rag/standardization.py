@@ -65,6 +65,7 @@ RELATION_WHITELIST = set(RELATION_ALIASES.values())
 
 def normalize_text(text: str) -> str:
     value = re.sub(r"\s+", " ", text or "").strip()
+    value = re.sub(r"\^p\d+(?:-[\w\u4e00-\u9fff-]+)*", "", value).strip()
     for alias, canonical in TERM_ALIASES.items():
         value = value.replace(alias, canonical)
     value = re.sub(r"(\d+(?:\.\d+)?)\s*(mm|毫米)", r"\1 mm", value, flags=re.I)

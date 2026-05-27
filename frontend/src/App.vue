@@ -15,12 +15,6 @@
         <div v-else class="text-[13px] font-medium" style="color:#A9A39A">Visual RAG System</div>
       </div>
 
-      <!-- Tech badges -->
-      <div class="hidden md:flex items-center gap-1.5">
-        <span v-for="tag in ['Docling','Qdrant','Claude','UMAP','NetworkX']" :key="tag"
-          class="text-[10px] bg-black/[0.05] px-2 py-0.5 rounded" style="color:#A9A39A">{{ tag }}</span>
-      </div>
-
       <!-- Document Reader -->
       <button
         v-if="projectFiles.length > 0"
@@ -75,7 +69,7 @@
               <path d="M2 4h12M2 8h12M2 12h12"/>
             </svg>
           </button>
-          <span v-if="railOpen" class="text-[12px] font-semibold tracking-tight" style="color:#172033">Visual RAG</span>
+          <span v-if="railOpen" class="text-[12px] font-semibold tracking-tight" style="color:#172033">{{ lang === 'zh' ? '工作區' : 'Workspace' }}</span>
         </div>
 
         <!-- Rail content (only when expanded) -->
@@ -104,9 +98,11 @@
             <UploadPanel
               :ingesting="ingesting"
               :ingest-result="ingestResult"
+              :has-pending-preview="Boolean(ingestPreview)"
               :error="uploadError"
               :lang="lang"
               @upload="handleUpload"
+              @review="reviewPanelOpen = true"
             />
 
             <!-- File list -->
@@ -129,7 +125,7 @@
                   <div class="min-w-0 flex-1">
                     <p class="text-[12px] font-semibold truncate" style="color:#172033" :title="doc.filename">{{ doc.filename }}</p>
                     <p class="text-[11px]" style="color:#667085">
-                      {{ doc.chunk_count > 0 ? `${doc.chunk_count} chunks` : (lang === 'zh' ? '待建立圖譜' : 'pending graph') }}
+                      {{ doc.chunk_count > 0 ? `${doc.chunk_count} ${lang === 'zh' ? '知識節點' : 'knowledge nodes'}` : (lang === 'zh' ? '待建立知識圖譜' : 'pending knowledge graph') }}
                     </p>
                   </div>
                   <button
@@ -183,6 +179,15 @@
           @fetch-graph-analysis="handleFetchGraphAnalysis"
           @view-source="openReaderAtSource"
         />
+        <NodeReviewPanel
+          v-if="ingestPreview && reviewPanelOpen"
+          :preview="ingestPreview"
+          :busy="ingesting"
+          :lang="lang"
+          @confirm="handleCommitIngestPreview"
+          @discard="handleDiscardIngestPreview"
+          @close="reviewPanelOpen = false"
+        />
       </main>
 
       <!-- Right chat panel -->
@@ -211,6 +216,7 @@
       :target="readerTarget"
       :pdf-url="pdfUrl"
       :page-image-url="pageImageUrl"
+      :lang="lang"
       :fetch-pdf-info="fetchPdfInfo"
       :analyze-selection="analyzeSelection"
       :create-manual-chunk="handleCreateManualChunk"
@@ -271,17 +277,18 @@ import VisualizationPanel from './components/VisualizationPanel/VisualizationPan
 import UploadPanel from './components/UploadPanel/UploadPanel.vue'
 import ChatPanel from './components/ChatPanel/ChatPanel.vue'
 import DocumentReader from './components/DocumentReader/DocumentReader.vue'
+import NodeReviewPanel from './components/NodeReviewPanel/NodeReviewPanel.vue'
 import ProjectPanel from './components/ProjectPanel/ProjectPanel.vue'
 import { useRag } from './composables/useRag'
-import type { DocMetadata, ManualChunkRequest, ManualChunkInfo, ChunkRelation } from './types/rag'
+import type { DocMetadata, IngestPreviewResponse, ManualChunkRequest, ManualChunkInfo, ChunkRelation } from './types/rag'
 
 const {
   ingesting, querying, loadingUmap, loadingGraphAnalysis,
-  ingestResult, queryResult, umapResult, graphAnalysisResult,
+  ingestResult, ingestPreview, queryResult, umapResult, graphAnalysisResult,
   projectFiles, manualChunks, error, projectFilterOptions,
   projects, activeProjectId, activeProject,
   createProject, fetchProjectFilterOptions, switchProject, deleteProject,
-  ingestPdf, removeProjectFile, clearProject,
+  ingestPdf, commitIngestPreview, discardIngestPreview, removeProjectFile, clearProject,
   pdfUrl, pageImageUrl, analyzeSelection, createManualChunk, deleteManualChunk, fetchManualChunks,
   relations, fetchRelations, createRelation, updateRelationWeight, deleteRelation,
   fetchProjectFiles, fetchPdfInfo, query, fetchUmap, fetchGraphAnalysis,
@@ -292,6 +299,7 @@ const railOpen = ref(true)
 const chatOpen = ref(true)
 const showReader = ref(false)
 const readerTarget = ref<{ sourceDoc: string; page: number; nonce: number } | null>(null)
+const reviewPanelOpen = ref(false)
 const deleteConfirmOpen = ref(false)
 const pendingDeleteFile = ref<string | null>(null)
 const pendingClearAll = ref(false)
@@ -307,12 +315,12 @@ const deleteConfirmTitle = computed(() => {
 const deleteConfirmMessage = computed(() => {
   if (pendingClearAll.value) {
     return lang.value === 'zh'
-      ? '這會移除目前專案中的 PDF、節點、關係、向量索引與 Graph JSON。此操作無法復原。'
-      : 'This removes PDFs, nodes, relations, vector indexes, and Graph JSON for this project. This cannot be undone.'
+      ? '這會移除目前專案中的 PDF、知識節點、節點關係、向量索引與知識圖譜 JSON。此操作無法復原。'
+      : 'This removes PDFs, knowledge nodes, node relations, vector indexes, and knowledge graph JSON for this project. This cannot be undone.'
   }
   return lang.value === 'zh'
-    ? '這會移除該 PDF 產生的頁面、節點、關係、向量資料與 Graph JSON。此操作無法復原。'
-    : 'This removes pages, nodes, relations, vectors, and Graph JSON derived from this PDF. This cannot be undone.'
+    ? '這會移除該 PDF 產生的頁面、知識節點、節點關係、向量資料與知識圖譜 JSON。此操作無法復原。'
+    : 'This removes pages, knowledge nodes, node relations, vectors, and knowledge graph JSON derived from this PDF. This cannot be undone.'
 })
 // ── viz cache helpers ─────────────────────────────────────────────────────────
 
@@ -410,7 +418,19 @@ async function confirmDeleteAction() {
 async function handleUpload(file: File, loaderType: string, strategy: 'auto' | 'manual') {
   await ingestPdf(file, loaderType, strategy)
   await Promise.all([fetchManualChunks(), fetchRelations()])
+  reviewPanelOpen.value = Boolean(ingestPreview.value)
   clearVizCache()
+}
+
+async function handleCommitIngestPreview(preview: IngestPreviewResponse) {
+  await commitIngestPreview(preview)
+  reviewPanelOpen.value = false
+  clearVizCache()
+}
+
+function handleDiscardIngestPreview() {
+  discardIngestPreview()
+  reviewPanelOpen.value = false
 }
 
 async function runQuery(question: string) {

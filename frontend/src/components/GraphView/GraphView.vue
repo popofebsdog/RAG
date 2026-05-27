@@ -18,7 +18,7 @@
       class="absolute inset-0 flex flex-col items-center justify-center text-muted gap-3"
     >
       <div class="text-5xl opacity-30">🕸️</div>
-      <p class="text-sm">Upload a PDF to see the RAG pipeline graph</p>
+      <p class="text-sm">上傳 PDF 後會顯示知識圖譜</p>
     </div>
 
     <svg ref="svgRef" class="w-full h-full" />
@@ -43,10 +43,10 @@
           <button class="text-muted hover:text-white text-sm" @click="selectedNode = null">✕</button>
         </div>
         <p v-if="selectedNode.data?.score" class="text-xs text-warning mb-1">
-          Similarity: {{ (selectedNode.data.score as number).toFixed(4) }}
+          相似度：{{ (selectedNode.data.score as number).toFixed(4) }}
         </p>
         <p v-if="selectedNode.data?.page" class="text-xs text-muted mb-1">
-          Page {{ selectedNode.data.page }}
+          原文頁 {{ selectedNode.data.page }}
         </p>
         <p v-if="selectedNode.data?.text" class="text-xs text-slate-300 leading-relaxed whitespace-pre-wrap">
           {{ (selectedNode.data.text as string).slice(0, 400) }}{{ (selectedNode.data.text as string).length > 400 ? '…' : '' }}

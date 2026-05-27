@@ -15,7 +15,7 @@
     <div v-if="data && hasRelationVectors" class="absolute top-14 right-3 z-10 rounded-lg px-2.5 py-2 border" style="background:rgba(253,252,249,0.92);border-color:#E0DBD2">
       <label class="flex items-center gap-2 text-[11px]" style="color:#6B6660">
         <input v-model="showRelationVectors" type="checkbox" class="accent-[oklch(0.38_0.09_222)]" />
-        <span>顯示關係向量</span>
+        <span>顯示節點關係向量</span>
       </label>
     </div>
 
@@ -23,7 +23,7 @@
     <div v-if="data" class="absolute top-14 left-3 z-10 text-[11px] flex flex-col gap-1 rounded-lg px-2.5 py-2 border" style="background:rgba(253,252,249,0.92);border-color:#E0DBD2">
       <div class="flex items-center gap-1.5">
         <span class="w-2.5 h-2.5 rounded-full bg-accent/50 inline-block" />
-        <span style="color:#A9A39A">Chunks (by page)</span>
+        <span style="color:#A9A39A">知識節點</span>
       </div>
       <div class="flex items-center gap-1.5">
         <span class="w-2.5 h-2.5 rounded-full bg-green-500 inline-block" />
@@ -35,7 +35,7 @@
       </div>
       <div v-if="showRelationVectors && hasRelationVectors" class="flex items-center gap-1.5">
         <span class="text-[13px] leading-none" style="color:#1E4E8C">◆</span>
-        <span style="color:#A9A39A">Relation vectors</span>
+        <span style="color:#A9A39A">節點關係向量</span>
       </div>
     </div>
 
@@ -48,9 +48,9 @@
       style="background:rgba(253,252,249,0.97);border-color:#E0DBD2"
       :style="{ left: tooltip.x + 'px', top: tooltip.y + 'px' }"
     >
-      <div class="font-mono mb-0.5 truncate" style="color:oklch(0.38 0.09 222)">{{ tooltip.chunk_id }}</div>
+      <div class="font-mono mb-0.5 truncate" style="color:oklch(0.38 0.09 222)">{{ tooltip.label || tooltip.chunk_id }}</div>
       <div class="mb-1" style="color:#A9A39A">
-        {{ tooltip.node_type === 'relation' ? 'Relation vector' : `Page ${tooltip.source_page}` }}
+        {{ tooltip.node_type === 'relation' ? '節點關係向量' : `原文頁 ${tooltip.source_page}` }}
         · {{ (tooltip.score * 100).toFixed(1) }}%
       </div>
       <p style="color:#6B6660">{{ tooltip.text.slice(0, 120) }}…</p>

@@ -68,7 +68,8 @@ def _extract_structured_vlm_markdown(pages: list[PageContent]) -> ExtractedKnowl
 
     def ensure_node(label: str, evidence: str, page_num: int) -> str:
         clean_label = normalize_label(label, evidence)
-        clean_text = normalize_text(evidence or label)
+        page_text = page_text_by_num.get(page_num, "")
+        clean_text = _compose_vlm_node_text(page_text, clean_label, evidence or label)
         if not clean_label:
             return ""
         if _is_administrative_node(clean_label, clean_text):
@@ -78,6 +79,7 @@ def _extract_structured_vlm_markdown(pages: list[PageContent]) -> ExtractedKnowl
             nodes.append(ExtractedNode(label=clean_label, text=clean_text[:420], page=page_num))
         return clean_label
 
+    page_text_by_num = {page.page_num: page.text for page in pages}
     for page in pages:
         for line in page.text.splitlines():
             stripped = line.strip().lstrip("-").strip()
@@ -123,6 +125,76 @@ def _extract_structured_vlm_markdown(pages: list[PageContent]) -> ExtractedKnowl
     return ExtractedKnowledgeGraph(nodes=nodes[:60], relations=unique_relations[:80])
 
 
+def _compose_vlm_node_text(page_text: str, label: str, evidence: str) -> str:
+    """Use the richer VLM page interpretation as node content, not chunk/anchor text."""
+    clean_evidence = normalize_text(_strip_vlm_prefix(evidence))
+    relevant_lines: list[str] = []
+    for section in ["關鍵事實", "圖像證據", "數值與位置", "頁面摘要"]:
+        for line in _section_lines(page_text, section):
+            line = normalize_text(_strip_vlm_prefix(line))
+            if not line or line == "無":
+                continue
+            if _line_matches_node(line, label, clean_evidence) or len(relevant_lines) < 2:
+                relevant_lines.append(line)
+            if len(relevant_lines) >= 5:
+                break
+        if len(relevant_lines) >= 5:
+            break
+
+    if clean_evidence and not _looks_like_weak_evidence(clean_evidence):
+        relevant_lines.insert(0, clean_evidence)
+
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for line in relevant_lines:
+        compact = re.sub(r"\s+", "", line)
+        if compact in seen:
+            continue
+        seen.add(compact)
+        deduped.append(line)
+    text = "；".join(deduped[:5]) or clean_evidence or normalize_text(label)
+    return text[:520]
+
+
+def _section_lines(markdown: str, heading: str) -> list[str]:
+    lines = markdown.splitlines()
+    in_section = False
+    result: list[str] = []
+    for raw in lines:
+        line = raw.strip()
+        if re.match(r"^#{2,4}\s+", line):
+            in_section = heading in line
+            continue
+        if in_section:
+            if not line:
+                continue
+            if line.startswith("-"):
+                result.append(line.lstrip("-").strip())
+    return result
+
+
+def _strip_vlm_prefix(text: str) -> str:
+    value = re.sub(r"\^p\d+(?:-[\w\u4e00-\u9fff-]+)*", "", text or "")
+    value = re.sub(r"\b(?:image|observation|implication|label|evidence)\s*[:：]", "", value, flags=re.I)
+    value = value.replace("|", "，")
+    return value.strip(" -，,。；;")
+
+
+def _line_matches_node(line: str, label: str, evidence: str) -> bool:
+    tokens = set(re.findall(r"[A-Za-z0-9.]+|[\u4e00-\u9fff]{2,}", f"{label} {evidence}"))
+    if not tokens:
+        return False
+    return any(token in line for token in tokens)
+
+
+def _looks_like_weak_evidence(text: str) -> bool:
+    weak_phrases = [
+        "報告標題", "聲明", "報告用途", "計畫資源", "技術支持", "分析流程",
+        "聚焦", "強調", "頁面摘要", "本頁", "討論",
+    ]
+    return len(text) < 18 or any(phrase in text for phrase in weak_phrases)
+
+
 def _is_administrative_node(label: str, evidence: str) -> bool:
     """Filter report/team/acknowledgement artifacts from the domain graph."""
     text = f"{label} {evidence}"
@@ -147,7 +219,13 @@ def _is_administrative_node(label: str, evidence: str) -> bool:
         "層理", "坡趾", "傾覆", "座標", "台2線", "70.1k", "70k",
         "土石流", "滑動", "破壞", "災害日期", "累積",
     ]
+    weak_admin_phrases = [
+        "報告標題", "聲明", "報告用途", "計畫資源", "技術支持", "分析流程",
+        "團隊", "討論用途", "頁面摘要",
+    ]
     if label in generic_labels:
+        return True
+    if any(phrase in text for phrase in weak_admin_phrases):
         return True
     if any(keyword in label for keyword in ["GeoPORT", "數位科技", "防災系統", "防災預警系統", "報告日期", "初勘報告", "本報告", "調查能力", "遙測分析"]):
         return True

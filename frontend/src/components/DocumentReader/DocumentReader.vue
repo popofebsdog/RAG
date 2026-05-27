@@ -6,7 +6,7 @@
       <div class="relative w-[94vw] h-[90vh] bg-canvas border border-border rounded-2xl flex overflow-hidden shadow-2xl">
         <aside class="w-60 border-r border-border flex flex-col shrink-0 bg-rail">
           <div class="px-4 py-3 border-b border-border">
-            <p class="text-[10px] font-semibold uppercase tracking-[0.08em] text-faint">Documents</p>
+            <p class="text-[10px] font-semibold uppercase tracking-[0.08em] text-faint">{{ lang === 'zh' ? '文件' : 'Documents' }}</p>
           </div>
 
           <div class="flex-1 overflow-y-auto p-2 space-y-0.5 min-h-0">
@@ -23,16 +23,16 @@
                 {{ doc.filename }}
               </p>
               <p class="text-[10px] mt-0.5 text-faint">
-                {{ doc.chunk_count > 0 ? `${doc.chunk_count} chunks` : '待解析' }}
+                {{ doc.chunk_count > 0 ? `${doc.chunk_count} ${lang === 'zh' ? '知識節點' : 'knowledge nodes'}` : (lang === 'zh' ? '待解析' : 'pending') }}
               </p>
             </button>
-            <p v-if="docs.length === 0" class="text-[11px] text-faint px-3 py-2">尚未上傳文件</p>
+            <p v-if="docs.length === 0" class="text-[11px] text-faint px-3 py-2">{{ lang === 'zh' ? '尚未上傳文件' : 'No documents uploaded' }}</p>
           </div>
 
           <div v-if="docManualChunks.length > 0" class="border-t border-border p-2 shrink-0">
             <div class="flex items-center gap-1 px-1 py-1 mb-1">
               <p class="flex-1 text-[10px] font-semibold py-0.5 rounded text-amber-700 bg-amber-50 text-center">
-                圖譜節點 {{ docManualChunks.length }}
+                {{ lang === 'zh' ? '知識節點' : 'Knowledge nodes' }} {{ docManualChunks.length }}
               </p>
             </div>
 
@@ -61,8 +61,10 @@
         <main class="flex-1 flex flex-col overflow-hidden bg-canvas">
           <div class="px-6 py-3 border-b border-border flex items-center justify-between shrink-0">
             <div>
-              <h3 class="text-[14px] font-medium text-ink">{{ selectedDoc || '從左側選擇文件' }}</h3>
-              <p class="text-[11px] text-faint mt-0.5">PDF 原檔畫面；在頁面上拖曳框選，VLM 讀圖後可確認建立 chunk。</p>
+              <h3 class="text-[14px] font-medium text-ink">{{ selectedDoc || (lang === 'zh' ? '從左側選擇文件' : 'Select a document from the left') }}</h3>
+              <p class="text-[11px] text-faint mt-0.5">
+                {{ lang === 'zh' ? 'PDF 原檔畫面；在頁面上拖曳框選，VLM 讀圖後可確認建立知識節點。' : 'Original PDF view. Drag on a page to capture an area, then review the VLM result before creating a knowledge node.' }}
+              </p>
             </div>
             <div class="flex items-center gap-3">
               <Transition name="fade">
@@ -84,19 +86,19 @@
             @pointercancel="cancelDrag"
           >
             <div v-if="!selectedDoc" class="flex items-center justify-center h-full text-faint text-[13px]">
-              從左側選擇文件開始閱讀
+              {{ lang === 'zh' ? '從左側選擇文件開始閱讀' : 'Select a document from the left to start reading' }}
             </div>
 
             <div v-else-if="loading && !pdfAvailable" class="flex items-center justify-center h-full gap-3">
               <div class="w-5 h-5 rounded-full border-2 border-border border-t-ink animate-spin" />
-              <span class="text-[13px] text-faint">正在載入 PDF 原檔…</span>
+              <span class="text-[13px] text-faint">{{ lang === 'zh' ? '正在載入 PDF 原檔…' : 'Loading original PDF…' }}</span>
             </div>
 
             <div v-else-if="!pdfAvailable" class="h-full flex items-center justify-center px-8">
               <div class="max-w-md rounded-xl border border-border bg-surface p-6 text-center shadow-sm">
-                <p class="text-[15px] font-medium text-ink">{{ pdfError ? 'PDF 載入失敗' : '這份文件尚未保存 PDF 原檔' }}</p>
+                <p class="text-[15px] font-medium text-ink">{{ pdfError ? (lang === 'zh' ? 'PDF 載入失敗' : 'PDF failed to load') : (lang === 'zh' ? '這份文件尚未保存 PDF 原檔' : 'Original PDF was not saved for this document') }}</p>
                 <p class="mt-2 text-[13px] leading-relaxed text-sub">
-                  {{ pdfError || '舊資料沒有 PDF 原檔。請重新上傳一次，才能在原文頁面框選影像。' }}
+                  {{ pdfError || (lang === 'zh' ? '舊資料沒有 PDF 原檔。請重新上傳一次，才能在原文頁面框選影像。' : 'Older records do not include the original PDF. Re-upload the file to select areas in the source view.') }}
                 </p>
               </div>
             </div>
@@ -158,7 +160,7 @@
             <div class="relative w-[min(980px,94vw)] max-h-[86vh] overflow-hidden rounded-2xl border border-border bg-surface shadow-2xl">
               <div class="flex items-center justify-between border-b border-border px-5 py-3">
                 <div>
-                  <p class="text-[14px] font-medium text-ink">框選影像建立 Chunk</p>
+                  <p class="text-[14px] font-medium text-ink">{{ lang === 'zh' ? '框選影像建立知識節點' : 'Create a knowledge node from selection' }}</p>
                   <p class="text-[11px] text-faint">{{ selectedDoc }} · p.{{ selectionPage || '-' }}</p>
                 </div>
                 <button class="text-faint hover:text-ink text-xl leading-none transition-colors" @click="closeSelectionModal">×</button>
@@ -166,35 +168,35 @@
 
               <div class="grid max-h-[calc(86vh-116px)] grid-cols-[minmax(260px,0.9fr)_1.1fr] overflow-y-auto">
                 <div class="border-r border-border bg-[#f3efe7] p-4">
-                  <p class="mb-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-faint">截圖</p>
+                  <p class="mb-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-faint">{{ lang === 'zh' ? '截圖' : 'Selection' }}</p>
                   <div class="rounded-xl border border-black/10 bg-white p-2 shadow-sm">
-                    <img v-if="selectionImage" :src="selectionImage" class="max-h-[58vh] w-full object-contain" alt="框選截圖" />
+                    <img v-if="selectionImage" :src="selectionImage" class="max-h-[58vh] w-full object-contain" :alt="lang === 'zh' ? '框選截圖' : 'Selected area screenshot'" />
                   </div>
                 </div>
 
                 <div class="flex flex-col gap-4 p-5">
                   <div v-if="selectionAnalyzing" class="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[13px] text-amber-800">
-                    VLM 正在讀取框選內容…
+                    {{ lang === 'zh' ? 'VLM 正在讀取框選內容…' : 'VLM is reading the selected area…' }}
                   </div>
                   <div v-else-if="selectionError" class="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-[13px] text-red-700">
                     {{ selectionError }}
                   </div>
 
                   <label class="space-y-1.5">
-                    <span class="text-[12px] font-medium text-sub">節點名稱</span>
+                    <span class="text-[12px] font-medium text-sub">{{ lang === 'zh' ? '知識節點名稱' : 'Knowledge node name' }}</span>
                     <input
                       v-model="selectionLabel"
                       class="w-full rounded-xl border border-border bg-white px-3 py-2 text-[14px] text-ink outline-none focus:border-amber-400"
-                      placeholder="例如：崩塌機制"
+                      :placeholder="lang === 'zh' ? '例如：崩塌機制' : 'Example: slope failure mechanism'"
                     />
                   </label>
 
                   <label class="flex min-h-0 flex-1 flex-col space-y-1.5">
-                    <span class="text-[12px] font-medium text-sub">VLM 辨識內容，可編輯後建立 chunk</span>
+                    <span class="text-[12px] font-medium text-sub">{{ lang === 'zh' ? 'VLM 辨識內容，可編輯後建立知識節點' : 'VLM interpretation, editable before creating the knowledge node' }}</span>
                     <textarea
                       v-model="selectionDescription"
                       class="min-h-[260px] w-full resize-y rounded-xl border border-border bg-white px-3 py-2 text-[14px] leading-relaxed text-ink outline-none focus:border-amber-400"
-                      placeholder="VLM 辨識完成後會出現在這裡，也可以手動輸入。"
+                      :placeholder="lang === 'zh' ? 'VLM 辨識完成後會出現在這裡，也可以手動輸入。' : 'The VLM result appears here. You can also type manually.'"
                     />
                   </label>
                 </div>
@@ -202,7 +204,7 @@
 
               <div class="flex items-center justify-end gap-2 border-t border-border px-5 py-3">
                 <button class="rounded-xl border border-border px-4 py-2 text-[13px] text-sub hover:bg-black/[0.03]" @click="closeSelectionModal">
-                  取消
+                  {{ lang === 'zh' ? '取消' : 'Cancel' }}
                 </button>
                 <button
                   class="rounded-xl px-4 py-2 text-[13px] font-medium transition-all"
@@ -212,7 +214,7 @@
                   :disabled="!canSubmitSelection"
                   @click="submitSelectionChunk"
                 >
-                  {{ submitting ? '建立中…' : '確定建立 Chunk' }}
+                  {{ submitting ? (lang === 'zh' ? '建立中…' : 'Creating…') : (lang === 'zh' ? '確定建立知識節點' : 'Create knowledge node') }}
                 </button>
               </div>
             </div>
@@ -253,6 +255,7 @@ const props = defineProps<{
   docs: DocInfo[]
   manualChunks: ManualChunkInfo[]
   target?: { sourceDoc: string; page: number; nonce?: number } | null
+  lang: 'en' | 'zh'
   pdfUrl: (filename: string) => string
   pageImageUrl: (filename: string, pageNum: number) => string
   fetchPdfInfo: (filename: string) => Promise<PDFInfo>
@@ -390,14 +393,16 @@ async function selectDoc(filename: string, page: number | null = null) {
     if (page) await scrollToPage(page)
   } catch (err) {
     pdfAvailable.value = false
-    pdfError.value = err instanceof Error ? err.message : '未知的 PDF 渲染錯誤'
+    pdfError.value = err instanceof Error
+      ? err.message
+      : (props.lang === 'zh' ? '未知的 PDF 渲染錯誤' : 'Unknown PDF rendering error')
   } finally {
     if (token === renderToken) loading.value = false
   }
 }
 
 async function loadPdf(filename: string, token: number) {
-  renderStatus.value = '正在讀取 PDF 頁面…'
+  renderStatus.value = props.lang === 'zh' ? '正在讀取 PDF 頁面…' : 'Reading PDF pages…'
   const info = await props.fetchPdfInfo(filename)
   if (token !== renderToken) return
   pdfPages.value = Array.from({ length: info.total_pages }, (_, index) => ({
@@ -499,7 +504,9 @@ async function analyzeCroppedSelection(rect: SelectionRect) {
     selectionLabel.value = result.label
     selectionDescription.value = result.description
   } catch (err) {
-    selectionError.value = err instanceof Error ? err.message : 'VLM 辨識失敗，請手動輸入內容。'
+    selectionError.value = err instanceof Error
+      ? err.message
+      : (props.lang === 'zh' ? 'VLM 辨識失敗，請手動輸入內容。' : 'VLM interpretation failed. Please enter the content manually.')
   } finally {
     selectionAnalyzing.value = false
   }
@@ -529,7 +536,7 @@ async function submitSelectionChunk() {
       source_page: selectionPage.value,
       source_anchor: selectionPage.value ? `^p${selectionPage.value}` : null,
     })
-    successMsg.value = `「${label}」已建立`
+    successMsg.value = props.lang === 'zh' ? `「${label}」已建立` : `"${label}" created`
     setTimeout(() => { successMsg.value = '' }, 3000)
     closeSelectionModal()
   } finally {
