@@ -19,7 +19,7 @@ docker compose up -d postgres qdrant
 
   if [ ! -f ".env" ]; then
     cp .env.example .env
-    echo "⚠️  Created backend/.env — set ANTHROPIC_API_KEY before continuing"
+    echo "⚠️  Created backend/.env — set an API key and run: ollama pull nomic-embed-text"
     exit 1
   fi
 

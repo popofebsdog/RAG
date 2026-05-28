@@ -184,6 +184,50 @@ class QdrantStore:
         )
         postgres_store.bulk_upsert_chunks(meta.project_id, [payload])
 
+    def upsert_external_vision(
+        self,
+        chunk: Chunk,
+        embedding: np.ndarray,
+        label: str,
+        *,
+        node_type: str = "external_vision",
+        meta: DocMeta | None = None,
+        metadata: dict | None = None,
+    ) -> None:
+        """Persist an external image-recognition result as a reviewed knowledge node."""
+        from qdrant_client.models import PointStruct
+
+        meta = meta or DocMeta()
+        payload = {
+            "chunk_id": chunk.chunk_id,
+            "text": chunk.text,
+            "source_page": chunk.source_page,
+            "start_char": 0,
+            "end_char": len(chunk.text),
+            "source_doc": chunk.source_doc,
+            "source_anchor": chunk.source_anchor,
+            "region": meta.region,
+            "year": meta.year,
+            "perspective": meta.perspective,
+            "project_id": meta.project_id,
+            "label": label,
+            "is_manual": True,
+            "node_type": node_type,
+            "hazard_tags": detect_hazard_tags(f"{label}\n{chunk.text}"),
+            "metadata": metadata or {},
+        }
+        self.client.upsert(
+            collection_name=self.COLLECTION,
+            points=[
+                PointStruct(
+                    id=_uid(chunk.chunk_id),
+                    vector=embedding.tolist(),
+                    payload=payload,
+                )
+            ],
+        )
+        postgres_store.bulk_upsert_chunks(meta.project_id, [payload])
+
     def upsert_relation(
         self,
         relation_id: str,

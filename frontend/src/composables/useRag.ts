@@ -18,6 +18,7 @@ import type {
   VLMSelectionResponse,
   Project,
   ProjectFilterOptions,
+  ExternalVisionPreviewResponse,
   ChunkRelation,
 } from '../types/rag'
 
@@ -105,9 +106,21 @@ export function useRag() {
           source: 'project_sidebar',
         },
       })
+      if (activeProjectId.value === project.id) {
+        await fetchManualChunks()
+        await fetchRelations()
+        await fetchGraphAnalysis(undefined, 5, 0.5)
+      }
     } catch {
       // Local project creation remains usable when the API/database is offline.
     }
+  }
+
+  async function fetchExternalVisionPreview(location?: string, date?: string): Promise<ExternalVisionPreviewResponse> {
+    const { data } = await axios.get<ExternalVisionPreviewResponse>(`${BASE}/external/dsm/preview`, {
+      params: { location: location || null, date: date || null },
+    })
+    return data
   }
 
   async function fetchProjectFilterOptions(): Promise<void> {
@@ -146,8 +159,8 @@ export function useRag() {
     }
     projects.value.push(project)
     saveProjects(projects.value)
-    void persistProject(project)
     switchProject(project.id)
+    void persistProject(project)
     return project
   }
 
@@ -540,6 +553,7 @@ export function useRag() {
     activeProject,
     createProject,
     fetchProjectFilterOptions,
+    fetchExternalVisionPreview,
     switchProject,
     deleteProject,
     updateProject,

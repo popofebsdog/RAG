@@ -222,7 +222,7 @@ const displayNodes = computed<GraphAnalysisNode[]>(() => {
       keywords: node.label,
       page: 0,
       source_doc: node.source_doc,
-      node_type: 'manual',
+      node_type: node.node_type || 'manual',
       hazard_tags: [],
       project_id: node.project_id,
       degree_centrality: 0,
@@ -338,6 +338,7 @@ function nodeTitle(id: string) {
 
 function displayNodeType(node: GraphAnalysisNode): string {
   if (node.node_type === 'relation') return props.lang === 'zh' ? '節點關係' : 'Node relation'
+  if (node.node_type === 'external_vision') return props.lang === 'zh' ? 'DSM辨識' : 'DSM vision'
   return props.lang === 'zh' ? '知識節點' : 'Knowledge node'
 }
 
@@ -572,7 +573,9 @@ function renderGraph() {
   const sortedNodes = [...graphNodes.value].sort(compareNodeOrder)
   const nodePositions = deterministicPositions(sortedNodes, visibleManualEdges.value, Boolean(props.queryResult))
   const elements: cytoscape.ElementDefinition[] = sortedNodes.map((node) => {
-    const color = node.is_manual
+    const color = node.node_type === 'external_vision'
+      ? '#0891B2'
+      : node.is_manual
       ? '#f59e0b'
       : node.node_type === 'relation'
         ? '#1E4E8C'
@@ -707,6 +710,17 @@ function renderGraph() {
           shape: 'diamond',
           'font-weight': 'bold',
           color: '#1E4E8C',
+        },
+      },
+      {
+        selector: 'node[nodeType = "external_vision"]',
+        style: {
+          shape: 'round-rectangle',
+          'background-color': '#0891B2',
+          'background-opacity': 0.24,
+          'border-color': '#0891B2',
+          color: '#0E7490',
+          'font-weight': 'bold',
         },
       },
       {

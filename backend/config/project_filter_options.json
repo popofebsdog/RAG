@@ -5,7 +5,10 @@
       "label": "台2線70.1K 平浪橋南側",
       "metadata": {
         "source": "geoport",
-        "node_source": "external_reference"
+        "node_source": "external_reference",
+        "dsm_job_id": 19,
+        "dsm_result_json_path": "/api/dsm-images/results/19_result.json",
+        "dsm_result_image_path": "/api/dsm-images/results/19_result.jpg"
       }
     },
     {
@@ -38,7 +41,10 @@
       "value": "2024-06-03",
       "label": "2024-06-03 崩塌發生",
       "metadata": {
-        "event_type": "disaster_event"
+        "event_type": "disaster_event",
+        "dsm_job_id": 19,
+        "dsm_result_json_path": "/api/dsm-images/results/19_result.json",
+        "dsm_result_image_path": "/api/dsm-images/results/19_result.jpg"
       }
     },
     {

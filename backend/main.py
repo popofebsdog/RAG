@@ -7,6 +7,7 @@ import tempfile
 import time
 from typing import Annotated
 
+import httpx
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, HTTPException, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -119,6 +120,21 @@ class ProjectUpsertRequest(BaseModel):
     date: str | None = None
     perspective: str | None = None
     metadata: dict = Field(default_factory=dict)
+
+
+class ExternalVisionNodePreview(BaseModel):
+    id: str
+    label: str
+    text: str
+    class_name: str | None = None
+    confidence: float | None = None
+
+
+class ExternalVisionPreviewResponse(BaseModel):
+    available: bool
+    message: str = ""
+    source_url: str | None = None
+    records: list[ExternalVisionNodePreview] = Field(default_factory=list)
 
 
 class IngestResponse(BaseModel):
@@ -357,6 +373,7 @@ class ManualChunkInfo(BaseModel):
     region: str | None = None
     year: int | None = None
     perspective: str | None = None
+    node_type: str = "manual"
 
 
 # ── Page models ──────────────────────────────────────────────────────────────
@@ -649,6 +666,212 @@ def _load_project_filter_options() -> ProjectFilterOptions:
     return ProjectFilterOptions(**data)
 
 
+def _find_option_metadata(options: ProjectFilterOptions, group: str, value: str | None) -> dict:
+    if not value:
+        return {}
+    choices = getattr(options, group, [])
+    for option in choices:
+        if option.value == value:
+            return dict(option.metadata or {})
+    return {}
+
+
+def _dsm_base_url() -> str:
+    return os.getenv("DSM_API_BASE_URL", os.getenv("EXTERNAL_VISION_API_URL", "http://localhost:3000")).rstrip("/")
+
+
+def _join_external_url(base_url: str, path: str) -> str:
+    if path.startswith("http://") or path.startswith("https://"):
+        return path
+    if not path.startswith("/"):
+        path = f"/{path}"
+    return f"{base_url}{path}"
+
+
+def _external_dsm_reference(location: str | None, date: str | None) -> dict:
+    options = _load_project_filter_options()
+    metadata = {
+        **_find_option_metadata(options, "locations", location),
+        **_find_option_metadata(options, "dates", date),
+    }
+    output_json_path = (
+        metadata.get("outputJsonPath")
+        or metadata.get("output_json_path")
+        or metadata.get("dsm_result_json_path")
+        or metadata.get("resultJsonPath")
+    )
+    output_json_filename = (
+        metadata.get("outputJsonFilename")
+        or metadata.get("output_json_filename")
+        or metadata.get("dsm_result_json_filename")
+    )
+    if output_json_path:
+        metadata["resolved_json_path"] = str(output_json_path)
+    elif output_json_filename:
+        metadata["resolved_json_path"] = f"/api/dsm-images/results/{output_json_filename}"
+    return metadata
+
+
+def _fetch_external_json(path: str) -> tuple[dict, str]:
+    base_url = _dsm_base_url()
+    url = _join_external_url(base_url, path)
+    with httpx.Client(timeout=float(os.getenv("DSM_API_TIMEOUT", "8"))) as client:
+        resp = client.get(url)
+        resp.raise_for_status()
+        return resp.json(), url
+
+
+def _candidate_detection_lists(data: object) -> list:
+    if isinstance(data, list):
+        return data
+    if not isinstance(data, dict):
+        return []
+    for key in ("detections", "objects", "instances", "results", "items", "features"):
+        value = data.get(key)
+        if isinstance(value, list):
+            return value
+    response = data.get("response")
+    if isinstance(response, (dict, list)):
+        return _candidate_detection_lists(response)
+    return []
+
+
+def _format_detection_text(
+    detection: dict,
+    *,
+    index: int,
+    location: str | None,
+    date: str | None,
+    summary: dict | None,
+    source_url: str,
+) -> tuple[str, str, str | None, float | None]:
+    class_name = (
+        detection.get("class")
+        or detection.get("className")
+        or detection.get("label")
+        or detection.get("category")
+        or detection.get("name")
+        or "unknown"
+    )
+    confidence_raw = detection.get("confidence", detection.get("score", detection.get("probability")))
+    try:
+        confidence = float(confidence_raw) if confidence_raw is not None else None
+    except (TypeError, ValueError):
+        confidence = None
+    bbox = detection.get("bbox") or detection.get("box") or detection.get("bounds")
+    area = detection.get("area") or detection.get("areaM2") or detection.get("area_m2")
+    centroid = detection.get("centroid") or detection.get("center")
+    label = f"DSM影像辨識_{class_name}_{index}"
+    text_parts = [
+        "DSM 影像辨識外部資料。",
+        f"地點：{location or '未指定'}。",
+        f"日期：{date or '未指定'}。",
+        f"辨識類別：{class_name}。",
+    ]
+    if confidence is not None:
+        text_parts.append(f"信心值：{confidence:.3f}。")
+    if bbox is not None:
+        text_parts.append(f"框選範圍：{bbox}。")
+    if area is not None:
+        text_parts.append(f"面積資訊：{area}。")
+    if centroid is not None:
+        text_parts.append(f"中心位置：{centroid}。")
+    if summary:
+        text_parts.append(f"整體摘要：{json.dumps(summary, ensure_ascii=False)}。")
+    text_parts.append(f"來源：{source_url}")
+    return label, "\n".join(text_parts), str(class_name), confidence
+
+
+def _external_vision_records(location: str | None, date: str | None) -> tuple[list[ExternalVisionNodePreview], dict, str | None, str]:
+    ref = _external_dsm_reference(location, date)
+    path = ref.get("resolved_json_path")
+    if not path:
+        return [], ref, None, "尚未在地點或日期選項 metadata 設定 DSM 結果 JSON 路徑"
+
+    data, source_url = _fetch_external_json(str(path))
+    response = data.get("response") if isinstance(data, dict) else data
+    summary = response.get("summary") if isinstance(response, dict) and isinstance(response.get("summary"), dict) else None
+    detections = _candidate_detection_lists(data)
+    records: list[ExternalVisionNodePreview] = []
+
+    for idx, item in enumerate(detections, start=1):
+        if not isinstance(item, dict):
+            item = {"value": item}
+        label, text, class_name, confidence = _format_detection_text(
+            item,
+            index=idx,
+            location=location,
+            date=date,
+            summary=summary,
+            source_url=source_url,
+        )
+        records.append(ExternalVisionNodePreview(
+            id=f"dsm:{idx}",
+            label=label,
+            text=text,
+            class_name=class_name,
+            confidence=confidence,
+        ))
+
+    if not records and summary:
+        records.append(ExternalVisionNodePreview(
+            id="dsm:summary",
+            label="DSM影像辨識_摘要",
+            text="\n".join([
+                "DSM 影像辨識外部資料摘要。",
+                f"地點：{location or '未指定'}。",
+                f"日期：{date or '未指定'}。",
+                f"摘要：{json.dumps(summary, ensure_ascii=False)}。",
+                f"來源：{source_url}",
+            ]),
+            class_name="summary",
+            confidence=None,
+        ))
+    return records, ref, source_url, ""
+
+
+def _import_external_vision_nodes(project_id: str, location: str | None, date: str | None, year: int | None, perspective: str | None) -> dict:
+    try:
+        records, ref, source_url, message = _external_vision_records(location, date)
+    except Exception as exc:
+        return {"imported": 0, "available": False, "message": f"DSM API 無法連線或解析失敗：{exc}"}
+    if not records:
+        return {"imported": 0, "available": False, "message": message or "沒有可匯入的 DSM 影像辨識資料"}
+
+    store = get_store()
+    meta = DocMeta(region=location, year=year, perspective=perspective, project_id=project_id)
+    imported = 0
+    for idx, record in enumerate(records, start=1):
+        chunk_id = f"external-dsm:{_slugify(location or 'unknown')}:{_slugify(date or 'nodate')}:{idx}"
+        chunk = Chunk(
+            chunk_id=chunk_id,
+            text=record.text,
+            source_page=0,
+            start_char=0,
+            end_char=len(record.text),
+            source_doc="DSM 影像辨識資料",
+            source_anchor=None,
+        )
+        store.upsert_external_vision(
+            chunk,
+            embed_query(f"{record.label}\n{record.text}"),
+            record.label,
+            node_type="external_vision",
+            meta=meta,
+            metadata={
+                "external_source": "dsm_api",
+                "source_url": source_url,
+                "location": location,
+                "date": date,
+                "reference": ref,
+                "class_name": record.class_name,
+                "confidence": record.confidence,
+            },
+        )
+        imported += 1
+    return {"imported": imported, "available": True, "message": "", "source_url": source_url}
+
+
 def _pending_ingest_path(project_id: str, preview_id: str) -> str:
     safe_project = re.sub(r"[^A-Za-z0-9_.-]", "_", project_id or "default")
     safe_preview = re.sub(r"[^A-Za-z0-9_.-]", "_", preview_id)
@@ -721,8 +944,34 @@ def project_filter_options():
     return _load_project_filter_options()
 
 
+@app.get("/external/dsm/preview", response_model=ExternalVisionPreviewResponse)
+def external_dsm_preview(location: str | None = None, date: str | None = None):
+    try:
+        records, _ref, source_url, message = _external_vision_records(location, date)
+        return ExternalVisionPreviewResponse(
+            available=bool(records),
+            message=message or (f"已讀取 {len(records)} 筆 DSM 影像辨識資料" if records else "沒有可匯入的 DSM 影像辨識資料"),
+            source_url=source_url,
+            records=records,
+        )
+    except Exception as exc:
+        return ExternalVisionPreviewResponse(
+            available=False,
+            message=f"DSM API 無法連線或解析失敗：{exc}",
+            source_url=None,
+            records=[],
+        )
+
+
 @app.post("/projects/upsert")
 def upsert_project(req: ProjectUpsertRequest):
+    external_import = _import_external_vision_nodes(
+        req.project_id,
+        req.region,
+        req.date,
+        req.year,
+        req.perspective,
+    ) if (req.region or req.date) else {"imported": 0, "available": False, "message": "未選擇地點或日期"}
     metadata = {
         **(req.metadata or {}),
         "region": req.region,
@@ -730,13 +979,17 @@ def upsert_project(req: ProjectUpsertRequest):
         "date": req.date,
         "perspective": req.perspective,
         "external_node_source": {
-            "enabled": bool(req.region or req.date),
+            "enabled": bool(external_import.get("imported")),
             "location": req.region,
             "date": req.date,
+            "provider": "dsm_api",
+            "imported": external_import.get("imported", 0),
+            "message": external_import.get("message", ""),
+            "source_url": external_import.get("source_url"),
         },
     }
     postgres_store.ensure_project(req.project_id, req.name, metadata=metadata)
-    return {"status": "ok", "project_id": req.project_id}
+    return {"status": "ok", "project_id": req.project_id, "external_import": external_import}
 
 
 @app.post("/ingest/preview", response_model=IngestPreviewResponse)
@@ -1367,6 +1620,7 @@ def create_manual_chunk(req: ManualChunkRequest):
         region=req.region,
         year=req.year,
         perspective=req.perspective,
+        node_type="manual",
     )
 
 
@@ -1385,6 +1639,7 @@ def list_manual_chunks(project_id: str = "default"):
             region=p.get("region"),
             year=p.get("year"),
             perspective=p.get("perspective"),
+            node_type=p.get("node_type") or "manual",
         )
         for p in payloads
     ]
