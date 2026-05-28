@@ -245,7 +245,14 @@ const visibleManualEdges = computed(() =>
   props.relations.filter((rel) => visibleNodeIds.value.has(rel.from_chunk_id) && visibleNodeIds.value.has(rel.to_chunk_id)),
 )
 const anomalyItems = computed(() => (props.queryResult?.anomalies ?? []).map(normalizeAnomaly))
-const retrievedNodeIds = computed(() => new Set((props.queryResult?.retrieved_chunks ?? []).map((chunk) => chunk.chunk_id)))
+const hasOutOfDomainAnomaly = computed(() =>
+  (props.queryResult?.anomalies ?? []).some((item) => item.type === 'out_of_domain'),
+)
+const shouldHighlightRetrieved = computed(() => !hasOutOfDomainAnomaly.value)
+const retrievedNodeIds = computed(() => {
+  if (!shouldHighlightRetrieved.value) return new Set<string>()
+  return new Set((props.queryResult?.retrieved_chunks ?? []).map((chunk) => chunk.chunk_id))
+})
 const duplicateRelation = computed(() => {
   const label = relationLabel.value.trim().toLocaleLowerCase()
   if (!fromId.value || !toId.value || !label) return null
@@ -332,6 +339,16 @@ function nodeTitle(id: string) {
 function displayNodeType(node: GraphAnalysisNode): string {
   if (node.node_type === 'relation') return props.lang === 'zh' ? '節點關係' : 'Node relation'
   return props.lang === 'zh' ? '知識節點' : 'Knowledge node'
+}
+
+function queryNodeLabel(): string {
+  const question = props.queryResult?.question?.trim() ?? ''
+  if (hasOutOfDomainAnomaly.value) {
+    return props.lang === 'zh' ? '主題外問題' : 'Out of domain'
+  }
+  const prefix = props.lang === 'zh' ? '查詢' : 'Query'
+  if (!question) return prefix
+  return question.length > 28 ? `${prefix}\n${question.slice(0, 28)}…` : `${prefix}\n${question}`
 }
 
 function anomalyLabel(type: string) {
@@ -447,7 +464,7 @@ function compareNodeOrder(a: GraphAnalysisNode, b: GraphAnalysisNode): number {
 function deterministicPositions(
   nodes: GraphAnalysisNode[],
   relations: ChunkRelation[],
-  includeAnomaly: boolean,
+  includeQuery: boolean,
 ): Map<string, { x: number; y: number }> {
   const ids = new Set(nodes.map((node) => node.id))
   const outgoing = new Map<string, string[]>()
@@ -514,9 +531,9 @@ function deterministicPositions(
     })
   }
 
-  if (includeAnomaly) {
+  if (includeQuery) {
     const lastLevel = Math.max(0, ...levels)
-    positions.set('__anomaly__', { x: (lastLevel + 1) * xGap, y: 0 })
+    positions.set('__query__', { x: (lastLevel + 1) * xGap, y: 0 })
   }
   return positions
 }
@@ -553,7 +570,7 @@ function renderGraph() {
   cy?.destroy()
 
   const sortedNodes = [...graphNodes.value].sort(compareNodeOrder)
-  const nodePositions = deterministicPositions(sortedNodes, visibleManualEdges.value, anomalyItems.value.length > 0)
+  const nodePositions = deterministicPositions(sortedNodes, visibleManualEdges.value, Boolean(props.queryResult))
   const elements: cytoscape.ElementDefinition[] = sortedNodes.map((node) => {
     const color = node.is_manual
       ? '#f59e0b'
@@ -572,7 +589,7 @@ function renderGraph() {
         label: nodeTitle(node.id),
         color,
         size: node.is_manual ? 58 + Math.min(relationCount, 4) * 8 : 32 + node.degree_centrality * 70,
-        isRetrieved: node.is_retrieved,
+        isRetrieved: shouldHighlightRetrieved.value && node.is_retrieved,
         isManual: node.is_manual,
         nodeType: node.node_type,
       },
@@ -619,31 +636,34 @@ function renderGraph() {
     })
   })
 
-  if (anomalyItems.value.length) {
+  if (props.queryResult) {
+    const queryIsWarning = hasOutOfDomainAnomaly.value
     elements.push({
       group: 'nodes' as const,
-      position: nodePositions.get('__anomaly__'),
+      position: nodePositions.get('__query__'),
       data: {
-        id: '__anomaly__',
-        label: props.lang === 'zh' ? '異常' : 'Anomaly',
-        color: '#DC2626',
-        size: 46,
+        id: '__query__',
+        label: queryNodeLabel(),
+        color: queryIsWarning ? '#DC2626' : '#1E4E8C',
+        size: queryIsWarning ? 52 : 50,
         isRetrieved: false,
         isManual: false,
-        nodeType: 'anomaly',
+        nodeType: queryIsWarning ? 'query-warning' : 'query',
       },
     })
-    const linkedIds = [...retrievedNodeIds.value].filter((id) => nodeIds.has(id)).slice(0, 6)
+    const linkedIds = queryIsWarning
+      ? []
+      : [...retrievedNodeIds.value].filter((id) => nodeIds.has(id)).slice(0, 6)
     linkedIds.forEach((id) => {
       elements.push({
         group: 'edges' as const,
         data: {
-          id: `anomaly-${id}`,
-          source: '__anomaly__',
+          id: `query-${id}`,
+          source: '__query__',
           target: id,
           weight: 1,
-          label: props.lang === 'zh' ? '警示' : 'alert',
-          edgeType: 'anomaly',
+          label: props.lang === 'zh' ? '命中' : 'match',
+          edgeType: 'query',
         },
       })
     })
@@ -690,7 +710,20 @@ function renderGraph() {
         },
       },
       {
-        selector: 'node[nodeType = "anomaly"]',
+        selector: 'node[nodeType = "query"]',
+        style: {
+          shape: 'round-rectangle',
+          'background-opacity': 0.22,
+          'border-width': 3,
+          'border-style': 'dashed',
+          color: '#1E4E8C',
+          'font-weight': 'bold',
+          'font-size': 11,
+          'text-max-width': '130px',
+        },
+      },
+      {
+        selector: 'node[nodeType = "query-warning"]',
         style: {
           shape: 'hexagon',
           'background-opacity': 0.34,
@@ -749,6 +782,23 @@ function renderGraph() {
           color: '#6B6660',
           'text-background-color': '#FFFFFF',
           'text-background-opacity': 0.82,
+          'text-background-padding': '2px',
+        },
+      },
+      {
+        selector: 'edge[edgeType = "query"]',
+        style: {
+          width: 2,
+          'line-color': '#17643A',
+          'target-arrow-color': '#17643A',
+          'target-arrow-shape': 'triangle',
+          'curve-style': 'bezier',
+          'line-style': 'dashed',
+          label: 'data(label)',
+          'font-size': 9,
+          color: '#17643A',
+          'text-background-color': '#FDFCF9',
+          'text-background-opacity': 0.85,
           'text-background-padding': '2px',
         },
       },

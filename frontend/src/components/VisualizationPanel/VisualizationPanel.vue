@@ -25,6 +25,7 @@
       :key="`knowledge-graph-${projectId ?? 'none'}`"
       v-show="activeTab === 'knowledge-graph'"
       :data="graphAnalysisResult"
+      :query-result="queryResult"
       :loading="loadingGraphAnalysis"
       :lang="lang"
       :threshold="threshold"

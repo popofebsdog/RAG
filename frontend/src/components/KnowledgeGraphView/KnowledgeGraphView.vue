@@ -114,10 +114,11 @@
 <script setup lang="ts">
 import { computed, ref, watch, onUnmounted, nextTick } from 'vue'
 import cytoscape from 'cytoscape'
-import type { GraphAnalysisResponse, GraphAnalysisNode } from '../../types/rag'
+import type { GraphAnalysisResponse, GraphAnalysisNode, QueryResponse } from '../../types/rag'
 
 const props = defineProps<{
   data: GraphAnalysisResponse | null
+  queryResult: QueryResponse | null
   loading: boolean
   lang?: 'en' | 'zh'
   threshold: number
@@ -136,6 +137,10 @@ const selectedPdfAvailable = computed(() => {
   const node = selected.value
   return Boolean(node?.source_doc && node.page && node.page > 0)
 })
+
+const shouldHighlightRetrieved = computed(() =>
+  !(props.queryResult?.anomalies ?? []).some((item) => item.type === 'out_of_domain'),
+)
 
 const selectedPdfTarget = computed(() => {
   const node = selected.value
@@ -164,6 +169,12 @@ watch(selectedPdfTarget, async () => {
   pdfPreviewError.value = ''
   pdfPreviewLoading.value = selectedPdfAvailable.value
 })
+
+watch(() => props.queryResult, async () => {
+  if (!props.data || !cyContainer.value) return
+  await nextTick()
+  renderGraph(props.data)
+}, { deep: true })
 
 watch(() => props.active, async (active) => {
   if (!active) return
@@ -196,7 +207,17 @@ function displayNodeTitle(node: GraphAnalysisNode): string {
 
 function displayNodeType(node: GraphAnalysisNode): string {
   if (node.node_type === 'relation') return langText(props.lang, '節點關係', 'Node relation')
+  if (node.node_type === 'query') return langText(props.lang, '查詢', 'Query')
+  if (node.node_type === 'query-warning') return langText(props.lang, '主題外問題', 'Out of domain')
   return langText(props.lang, '知識節點', 'Knowledge node')
+}
+
+function queryNodeLabel(): string {
+  const question = props.queryResult?.question?.trim() ?? ''
+  if (!shouldHighlightRetrieved.value) return langText(props.lang, '主題外問題', 'Out of domain')
+  const prefix = langText(props.lang, '查詢', 'Query')
+  if (!question) return prefix
+  return question.length > 28 ? `${prefix}\n${question.slice(0, 28)}…` : `${prefix}\n${question}`
 }
 
 function refitGraph() {
@@ -370,6 +391,12 @@ function renderGraph(data: GraphAnalysisResponse) {
   const nodesById = new Map(visibleNodes.map((node) => [node.id, node]))
   const connectedPairs = new Set<string>()
   const nodePositions = deterministicPositions(visibleNodes, data.manual_relations)
+  const queryPosition = (() => {
+    if (!props.queryResult) return null
+    const positions = [...nodePositions.values()]
+    const maxX = positions.length ? Math.max(...positions.map((p) => p.x)) : 0
+    return { x: maxX + 260, y: 0 }
+  })()
 
   for (const node of visibleNodes) {
     const color = node.is_manual
@@ -390,7 +417,7 @@ function renderGraph(data: GraphAnalysisResponse) {
         label: displayNodeLabel(node),
         color,
         size,
-        isRetrieved: node.is_retrieved,
+        isRetrieved: shouldHighlightRetrieved.value && node.is_retrieved,
         isManual: node.is_manual,
         nodeType: node.node_type,
         sourceDoc: node.source_doc,
@@ -453,6 +480,52 @@ function renderGraph(data: GraphAnalysisResponse) {
     })
   }
 
+  if (props.queryResult && queryPosition) {
+    const queryIsWarning = !shouldHighlightRetrieved.value
+    elements.push({
+      group: 'nodes',
+      position: queryPosition,
+      data: {
+        id: '__query__',
+        label: queryNodeLabel(),
+        color: queryIsWarning ? '#DC2626' : '#1E4E8C',
+        size: queryIsWarning ? 52 : 50,
+        isRetrieved: false,
+        isManual: false,
+        nodeType: queryIsWarning ? 'query-warning' : 'query',
+        sourceDoc: '',
+        hazardTags: '',
+        projectId: '',
+        page: 0,
+        degree_centrality: 0,
+        betweenness_centrality: 0,
+        community: 0,
+        text: props.queryResult.question,
+        keywords: props.queryResult.question,
+      },
+    })
+
+    if (!queryIsWarning) {
+      const retrievedIds = new Set(props.queryResult.retrieved_chunks.map((chunk) => chunk.chunk_id))
+      ;[...retrievedIds]
+        .filter((id) => nodeIds.has(id))
+        .slice(0, 6)
+        .forEach((id) => {
+          elements.push({
+            group: 'edges',
+            data: {
+              id: `query-${id}`,
+              source: '__query__',
+              target: id,
+              label: langText(props.lang, '命中', 'match'),
+              weight: 1,
+              edgeType: 'query',
+            },
+          })
+        })
+    }
+  }
+
   cy = cytoscape({
     container: cyContainer.value!,
     elements,
@@ -501,6 +574,36 @@ function renderGraph(data: GraphAnalysisResponse) {
           'border-color': '#1E4E8C',
           color: '#1E4E8C',
           'font-weight': 'bold',
+        },
+      },
+      {
+        selector: 'node[nodeType = "query"]',
+        style: {
+          shape: 'round-rectangle',
+          'background-color': '#1E4E8C',
+          'background-opacity': 0.22,
+          'border-color': '#1E4E8C',
+          'border-width': 3,
+          'border-style': 'dashed',
+          color: '#1E4E8C',
+          'font-size': 11,
+          'font-weight': 'bold',
+          'text-max-width': '130px',
+        },
+      },
+      {
+        selector: 'node[nodeType = "query-warning"]',
+        style: {
+          shape: 'hexagon',
+          'background-color': '#DC2626',
+          'background-opacity': 0.34,
+          'border-color': '#DC2626',
+          'border-width': 4,
+          'border-style': 'double',
+          color: '#7C2D12',
+          'font-size': 11,
+          'font-weight': 'bold',
+          'text-max-width': '120px',
         },
       },
       // ── retrieved node ──
@@ -556,6 +659,23 @@ function renderGraph(data: GraphAnalysisResponse) {
           'text-background-padding': '2px',
         },
       },
+      {
+        selector: 'edge[edgeType = "query"]',
+        style: {
+          width: 2,
+          'line-color': '#17643A',
+          'target-arrow-color': '#17643A',
+          'target-arrow-shape': 'triangle',
+          'curve-style': 'bezier',
+          'line-style': 'dashed',
+          label: 'data(label)',
+          'font-size': 9,
+          color: '#17643A',
+          'text-background-color': '#FDFCF9',
+          'text-background-opacity': 0.85,
+          'text-background-padding': '2px',
+        },
+      },
     ],
     layout: {
       name: 'preset',
@@ -574,6 +694,10 @@ function renderGraph(data: GraphAnalysisResponse) {
 
   cy.on('tap', 'node', (evt) => {
     const d = evt.target.data()
+    if (d.id === '__query__') {
+      selected.value = null
+      return
+    }
     selected.value = {
       id: d.id,
       label: d.label,
