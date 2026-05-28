@@ -84,6 +84,7 @@
               :projects="projects"
               :active-project-id="activeProjectId"
               :filter-options="projectFilterOptions"
+              :preview-external-vision="fetchExternalVisionPreview"
               :lang="lang"
               @create="onCreateProject"
               @switch="onSwitchProject"
@@ -287,7 +288,7 @@ const {
   ingestResult, ingestPreview, queryResult, umapResult, graphAnalysisResult,
   projectFiles, manualChunks, error, projectFilterOptions,
   projects, activeProjectId, activeProject,
-  createProject, fetchProjectFilterOptions, switchProject, deleteProject,
+  createProject, fetchProjectFilterOptions, fetchExternalVisionPreview, switchProject, deleteProject,
   ingestPdf, commitIngestPreview, discardIngestPreview, removeProjectFile, clearProject,
   pdfUrl, pageImageUrl, analyzeSelection, createManualChunk, deleteManualChunk, fetchManualChunks,
   relations, fetchRelations, createRelation, updateRelationWeight, deleteRelation,

@@ -42,9 +42,9 @@
                 <span
                   class="shrink-0 px-1.5 py-0.5 rounded border text-[10px] uppercase tracking-wide"
                   :style="{
-                    borderColor: selected.node_type === 'relation' ? '#1E4E8C' : selected.is_manual ? '#d97706' : '#C7D3E3',
-                    color: selected.node_type === 'relation' ? '#1E4E8C' : selected.is_manual ? '#92400e' : '#41546F',
-                    background: selected.node_type === 'relation' ? '#EAF1FA' : selected.is_manual ? '#FFF7ED' : '#F6F8FB',
+                    borderColor: selected.node_type === 'external_vision' ? '#0891B2' : selected.node_type === 'relation' ? '#1E4E8C' : selected.is_manual ? '#d97706' : '#C7D3E3',
+                    color: selected.node_type === 'external_vision' ? '#0E7490' : selected.node_type === 'relation' ? '#1E4E8C' : selected.is_manual ? '#92400e' : '#41546F',
+                    background: selected.node_type === 'external_vision' ? '#ECFEFF' : selected.node_type === 'relation' ? '#EAF1FA' : selected.is_manual ? '#FFF7ED' : '#F6F8FB',
                   }"
                 >
                   {{ displayNodeType(selected) }}
@@ -56,7 +56,8 @@
             <div class="flex gap-3 mb-2 flex-wrap" style="color:#667085">
               <span v-if="selected.page > 0">p{{ selected.page }}</span>
               <span v-if="selected.is_retrieved" class="text-green-700">{{ lang === 'zh' ? '已取回' : 'Retrieved' }}</span>
-              <span v-if="selected.is_manual" class="text-amber-500">{{ lang === 'zh' ? '知識節點' : 'Knowledge node' }}</span>
+              <span v-if="selected.node_type === 'external_vision'" class="text-cyan-700">{{ lang === 'zh' ? '外部影像辨識' : 'External vision' }}</span>
+              <span v-else-if="selected.is_manual" class="text-amber-500">{{ lang === 'zh' ? '知識節點' : 'Knowledge node' }}</span>
             </div>
             <div class="flex flex-wrap gap-1.5 mb-2">
               <span
@@ -207,6 +208,7 @@ function displayNodeTitle(node: GraphAnalysisNode): string {
 
 function displayNodeType(node: GraphAnalysisNode): string {
   if (node.node_type === 'relation') return langText(props.lang, '節點關係', 'Node relation')
+  if (node.node_type === 'external_vision') return langText(props.lang, 'DSM辨識', 'DSM vision')
   if (node.node_type === 'query') return langText(props.lang, '查詢', 'Query')
   if (node.node_type === 'query-warning') return langText(props.lang, '主題外問題', 'Out of domain')
   return langText(props.lang, '知識節點', 'Knowledge node')
@@ -399,7 +401,9 @@ function renderGraph(data: GraphAnalysisResponse) {
   })()
 
   for (const node of visibleNodes) {
-    const color = node.is_manual
+    const color = node.node_type === 'external_vision'
+      ? '#0891B2'
+      : node.is_manual
       ? '#f59e0b'
       : COMMUNITY_COLORS[node.community % COMMUNITY_COLORS.length]
     const relationCount = data.manual_relations.filter(
@@ -562,6 +566,18 @@ function renderGraph(data: GraphAnalysisResponse) {
           'border-style': 'solid',
           color: '#92400e',
           'font-size': 14,
+          'font-weight': 'bold',
+        },
+      },
+      {
+        selector: 'node[nodeType = "external_vision"]',
+        style: {
+          shape: 'round-rectangle',
+          'background-color': '#0891B2',
+          'background-opacity': 0.24,
+          'border-color': '#0891B2',
+          color: '#0E7490',
+          'font-size': 13,
           'font-weight': 'bold',
         },
       },

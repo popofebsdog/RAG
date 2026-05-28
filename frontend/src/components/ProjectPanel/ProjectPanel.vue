@@ -93,6 +93,26 @@
             </option>
           </select>
         </div>
+        <div
+          v-if="newRegion || newDate"
+          class="external-preview"
+          :class="externalPreview?.available ? 'is-ready' : 'is-muted'"
+        >
+          <div class="flex items-center justify-between gap-2">
+            <span class="text-[11px] font-semibold">
+              {{ lang === 'zh' ? 'DSM 影像辨識資料' : 'DSM vision data' }}
+            </span>
+            <span v-if="externalPreviewLoading" class="text-[10px]" style="color:#667085">
+              {{ lang === 'zh' ? '檢查中…' : 'Checking…' }}
+            </span>
+            <span v-else class="text-[10px]" style="color:#667085">
+              {{ externalPreview?.records.length ?? 0 }} {{ lang === 'zh' ? '筆' : 'records' }}
+            </span>
+          </div>
+          <p class="mt-1 line-clamp-2 text-[11px]" style="color:#667085">
+            {{ externalPreviewMessage }}
+          </p>
+        </div>
         <div class="flex gap-1.5">
           <button
             type="submit"
@@ -116,12 +136,13 @@
 
 <script setup lang="ts">
 import { ref, computed, nextTick, watch } from 'vue'
-import type { Project, DocMetadata, ProjectFilterOptions, ProjectOption } from '../../types/rag'
+import type { Project, DocMetadata, ProjectFilterOptions, ProjectOption, ExternalVisionPreviewResponse } from '../../types/rag'
 
 const props = defineProps<{
   projects: Project[]
   activeProjectId: string | null
   filterOptions?: ProjectFilterOptions
+  previewExternalVision?: (location?: string, date?: string) => Promise<ExternalVisionPreviewResponse>
   lang?: 'en' | 'zh'
 }>()
 
@@ -139,6 +160,9 @@ const nameInput = ref<HTMLInputElement | null>(null)
 const newName = ref('')
 const newRegion = ref('')
 const newDate = ref('')
+const externalPreview = ref<ExternalVisionPreviewResponse | null>(null)
+const externalPreviewLoading = ref(false)
+let previewSeq = 0
 
 const fallbackLocations: ProjectOption[] = [
   { value: '台2線70.1K 平浪橋南側', label: '台2線70.1K 平浪橋南側' },
@@ -151,11 +175,39 @@ const fallbackDates: ProjectOption[] = [
 
 const locationOptions = computed(() => props.filterOptions?.locations?.length ? props.filterOptions.locations : fallbackLocations)
 const dateOptions = computed(() => props.filterOptions?.dates?.length ? props.filterOptions.dates : fallbackDates)
+const externalPreviewMessage = computed(() => {
+  if (externalPreviewLoading.value) return lang.value === 'zh' ? '正在讀取 DSM API 狀態。' : 'Reading DSM API status.'
+  if (!externalPreview.value) return lang.value === 'zh' ? '建立專案後會嘗試匯入外部辨識 JSON 作為知識節點。' : 'External JSON will be imported as knowledge nodes after project creation.'
+  return externalPreview.value.message || (externalPreview.value.available
+    ? (lang.value === 'zh' ? '建立專案後會匯入這些外部知識節點。' : 'These external knowledge nodes will be imported after project creation.')
+    : (lang.value === 'zh' ? '目前沒有可匯入的 DSM JSON。' : 'No DSM JSON is available yet.'))
+})
 
 watch(showCreate, async (v) => {
   if (v) {
     await nextTick()
     nameInput.value?.focus()
+  }
+})
+
+watch([newRegion, newDate], async ([region, date]) => {
+  externalPreview.value = null
+  if (!props.previewExternalVision || (!region && !date)) return
+  const seq = ++previewSeq
+  externalPreviewLoading.value = true
+  try {
+    const result = await props.previewExternalVision(region || undefined, date || undefined)
+    if (seq === previewSeq) externalPreview.value = result
+  } catch (error) {
+    if (seq === previewSeq) {
+      externalPreview.value = {
+        available: false,
+        message: lang.value === 'zh' ? 'DSM API 尚未連線或沒有對應資料。' : 'DSM API is unavailable or has no matching data.',
+        records: [],
+      }
+    }
+  } finally {
+    if (seq === previewSeq) externalPreviewLoading.value = false
   }
 })
 
@@ -171,6 +223,7 @@ function submitCreate() {
   newName.value = ''
   newRegion.value = ''
   newDate.value = ''
+  externalPreview.value = null
   showCreate.value = false
 }
 </script>
@@ -220,6 +273,20 @@ function submitCreate() {
 .form-input:focus {
   border-color: #9BB7D4;
   background: #FFFFFF;
+}
+.external-preview {
+  border: 1px solid #D7DEE8;
+  border-radius: 8px;
+  padding: 8px 9px;
+  background: #F8FAFC;
+}
+.external-preview.is-ready {
+  border-color: #9CC7CF;
+  background: #F1FAFB;
+}
+.external-preview.is-muted {
+  border-color: #E2E8F0;
+  background: #F8FAFC;
 }
 .slide-enter-active, .slide-leave-active {
   transition: all 0.15s ease;

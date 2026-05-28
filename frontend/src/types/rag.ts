@@ -44,6 +44,21 @@ export interface ProjectFilterOptions {
   perspectives: ProjectOption[]
 }
 
+export interface ExternalVisionNodePreview {
+  id: string
+  label: string
+  text: string
+  class_name?: string | null
+  confidence?: number | null
+}
+
+export interface ExternalVisionPreviewResponse {
+  available: boolean
+  message: string
+  source_url?: string | null
+  records: ExternalVisionNodePreview[]
+}
+
 export interface IngestResponse {
   filename: string
   total_pages: number
@@ -148,6 +163,7 @@ export interface ManualChunkInfo {
   region: string | null
   year: number | null
   perspective: string | null
+  node_type?: string
 }
 
 // ── Project types ─────────────────────────────────────────────────────────────

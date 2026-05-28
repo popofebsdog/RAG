@@ -11,6 +11,8 @@ LLM_PROVIDER   = os.getenv("LLM_PROVIDER",   "ollama")
 OLLAMA_URL     = os.getenv("OLLAMA_URL",     "http://localhost:11434")
 OLLAMA_MODEL   = os.getenv("OLLAMA_MODEL",   "llama3.2")
 OLLAMA_TIMEOUT = float(os.getenv("OLLAMA_TIMEOUT", "120"))
+OPENAI_MODEL   = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
+OPENAI_TIMEOUT = float(os.getenv("OPENAI_TIMEOUT", "120"))
 
 SYSTEM_PROMPT = (
     "你是一個精準的文件助理。"
@@ -51,6 +53,42 @@ def _anthropic_chat(system: str, user: str) -> str:
         messages=[{"role": "user", "content": user}],
     )
     return message.content[0].text
+
+
+# ── OpenAI ────────────────────────────────────────────────────────────────────
+
+def _extract_openai_text(data: dict) -> str:
+    if isinstance(data.get("output_text"), str):
+        return data["output_text"].strip()
+    parts: list[str] = []
+    for item in data.get("output") or []:
+        for content in item.get("content") or []:
+            text = content.get("text")
+            if isinstance(text, str):
+                parts.append(text)
+    return "\n".join(parts).strip()
+
+
+def _openai_chat(system: str, user: str) -> str:
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise RuntimeError("OPENAI_API_KEY is required when LLM_PROVIDER=openai")
+    resp = httpx.post(
+        "https://api.openai.com/v1/responses",
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        json={
+            "model": OPENAI_MODEL,
+            "input": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            "max_output_tokens": 1024,
+        },
+        timeout=OPENAI_TIMEOUT,
+    )
+    resp.raise_for_status()
+    text = _extract_openai_text(resp.json())
+    return text or "模型未回傳文字內容。"
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
@@ -104,6 +142,9 @@ def generate_answer(
 
     user_msg = f"上下文：\n{context}{relation_section}\n\n問題：{query}"
 
-    if LLM_PROVIDER == "anthropic":
+    provider = LLM_PROVIDER.lower()
+    if provider == "anthropic":
         return _anthropic_chat(SYSTEM_PROMPT, user_msg)
+    if provider == "openai":
+        return _openai_chat(SYSTEM_PROMPT, user_msg)
     return _ollama_chat(SYSTEM_PROMPT, user_msg)

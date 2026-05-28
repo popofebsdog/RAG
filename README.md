@@ -40,13 +40,13 @@ flowchart LR
 | Frontend | Vue 3 + TypeScript + Vite |
 | PDF rendering | PyMuPDF |
 | VLM parsing | Anthropic Claude Vision or OpenAI Vision-compatible model |
-| LLM answer generation | Anthropic Claude by default |
+| LLM answer generation | OpenAI by default, with Anthropic/Ollama fallback |
 | Vector DB | Qdrant |
 | Metadata DB | PostgreSQL 16 |
 | Graph analysis | NetworkX |
 | Graph UI | Cytoscape.js |
 | Embedding projection | UMAP |
-| Embeddings | `sentence-transformers` by default |
+| Embeddings | Ollama `nomic-embed-text` by default |
 
 ## Quick Start
 
@@ -68,7 +68,13 @@ cd backend
 cp .env.example .env
 ```
 
-Set at least one API key:
+Start Ollama and pull the embedding model:
+
+```bash
+ollama pull nomic-embed-text
+```
+
+Set at least one VLM/API key:
 
 ```bash
 ANTHROPIC_API_KEY=<your-anthropic-key>
@@ -81,10 +87,214 @@ Useful defaults in `backend/.env.example`:
 ```bash
 DATABASE_URL=postgresql://visual_rag:visual_rag_password@localhost:55432/visual_rag
 QDRANT_URL=http://localhost:6333
+OLLAMA_URL=http://localhost:11434
+EMBED_MODEL=nomic-embed-text
+LLM_PROVIDER=openai
+OPENAI_MODEL=gpt-4.1-mini
 VLM_PROVIDER=anthropic
 ANTHROPIC_VISION_MODEL=claude-sonnet-4-5
 OPENAI_VISION_MODEL=gpt-4.1-mini
 ```
+
+For maintainer handoff, keep `DATABASE_URL` and `QDRANT_URL` enabled. Do not set `QDRANT_PATH` in production unless you intentionally want local file-mode vector storage.
+
+## Vendor Environment Checklist
+
+When handing the system to an operations vendor, ask them to create `backend/.env` from `backend/.env.example` and fill the values below.
+
+### Required
+
+| Key | What To Fill | Example / Note |
+|---|---|---|
+| `DATABASE_URL` | PostgreSQL connection string | `postgresql://visual_rag:visual_rag_password@localhost:55432/visual_rag` |
+| `QDRANT_URL` | Qdrant server URL | `http://localhost:6333` |
+| `OLLAMA_URL` | Ollama server URL for embeddings | `http://localhost:11434` |
+| `EMBED_MODEL` | Ollama embedding model | `nomic-embed-text` |
+| `LLM_PROVIDER` | Answer-generation provider | Recommended: `openai` |
+| `OPENAI_API_KEY` | OpenAI API key, required when `LLM_PROVIDER=openai` or `VLM_PROVIDER=openai` | Keep secret; do not commit |
+| `OPENAI_MODEL` | Text answer model | `gpt-4.1-mini` |
+| `VLM_PROVIDER` | PDF vision parser provider | Recommended: `openai` if using only OpenAI billing |
+| `OPENAI_VISION_MODEL` | Vision model for PDF page understanding | `gpt-4.1-mini` |
+| `DSM_API_BASE_URL` | Vendor DSM API host and port, required for external image-recognition nodes | `http://localhost:3000` |
+| `DSM_API_TIMEOUT` | DSM API timeout in seconds | `8` |
+
+### Required Local Service Setup
+
+```bash
+docker compose up -d postgres qdrant
+ollama pull nomic-embed-text
+```
+
+The vendor should verify:
+
+```bash
+curl http://127.0.0.1:8000/health
+curl http://localhost:6333/collections
+curl http://localhost:11434/api/tags
+```
+
+### Optional / Tuning
+
+| Key | Purpose | Suggested Default |
+|---|---|---|
+| `VLM_MAX_PAGES` | Maximum PDF pages parsed by VLM | `20` |
+| `VLM_RENDER_DPI` | PDF page render resolution before VLM parsing | `160` |
+| `VLM_CONCURRENCY` | Number of pages processed in parallel | `4` |
+| `VLM_TIMEOUT` | VLM request timeout in seconds | `120` to `180` |
+| `VLM_CACHE` | Reuse VLM page parsing cache | `1` |
+| `CHUNK_MODE` | Knowledge-node preprocessing mode | `semantic` |
+| `TOP_K` | Retrieval evidence count | `5` |
+| `SEMANTIC_THRESHOLD` | Semantic split threshold | `0.70` for clean production; lower only for testing |
+| `MANUAL_BOOST` | Boost reviewed knowledge nodes during retrieval | `0.15` |
+| `DSM_API_BASE_URL` | Vendor DSM image-recognition API base URL | `http://localhost:3000` |
+| `DSM_API_TIMEOUT` | Timeout for DSM API reads, in seconds | `8` |
+
+## Vendor DSM API Integration
+
+The left project form has **Location** and **Date** dropdowns. These dropdowns are also the bridge to the vendor DSM image-recognition system.
+
+When a user creates a project:
+
+1. The frontend sends the selected location/date to this system.
+2. The backend reads matching DSM metadata from `backend/config/project_filter_options.json`.
+3. If the metadata contains a DSM result JSON path, the backend calls the vendor API at `DSM_API_BASE_URL`.
+4. The DSM result JSON is converted into `external_vision` knowledge nodes.
+5. These nodes are written to PostgreSQL and Qdrant, then displayed in the knowledge graph with a distinct DSM color.
+
+### Vendor Responsibilities
+
+The operations vendor should provide or confirm:
+
+| Item | Required Value |
+|---|---|
+| DSM API base URL | Example: `http://localhost:3000` |
+| Result JSON endpoint path | Example: `/api/dsm-images/results/19_result.json` |
+| Result image endpoint path, optional | Example: `/api/dsm-images/results/19_result.jpg` |
+| JSON schema for detections | Prefer keys like `detections`, `objects`, `instances`, `results`, `items`, or `features` |
+| Class labels | Example: `fall`, `normal` |
+| Confidence field, optional | Example: `confidence`, `score`, or `probability` |
+| Bounding box / geometry field, optional | Example: `bbox`, `box`, `bounds`, `centroid`, or `area` |
+
+### Backend Environment
+
+Add these values to `backend/.env`:
+
+```bash
+DSM_API_BASE_URL=http://localhost:3000
+EXTERNAL_VISION_API_URL=http://localhost:3000
+DSM_API_TIMEOUT=8
+```
+
+`DSM_API_BASE_URL` is the primary setting. `EXTERNAL_VISION_API_URL` is kept as an alias for future non-DSM image-recognition services. These values are intentionally not hard-coded in the frontend. If the vendor changes the DSM port or host, update only the backend env file.
+
+### Dropdown Metadata Mapping
+
+Each location/date option can include DSM metadata in `backend/config/project_filter_options.json`.
+
+Example:
+
+```json
+{
+  "value": "台2線70.1K 平浪橋南側",
+  "label": "台2線70.1K 平浪橋南側",
+  "metadata": {
+    "source": "geoport",
+    "node_source": "external_reference",
+    "dsm_job_id": 19,
+    "dsm_result_json_path": "/api/dsm-images/results/19_result.json",
+    "dsm_result_image_path": "/api/dsm-images/results/19_result.jpg"
+  }
+}
+```
+
+The backend currently accepts any of these JSON path keys:
+
+- `dsm_result_json_path`
+- `outputJsonPath`
+- `output_json_path`
+- `resultJsonPath`
+
+It also accepts filename-only metadata:
+
+```json
+{
+  "outputJsonFilename": "19_result.json"
+}
+```
+
+This resolves to:
+
+```text
+/api/dsm-images/results/19_result.json
+```
+
+### DSM API Endpoints Used By This System
+
+This system only needs to read the finished DSM result JSON for project creation:
+
+| Method | Endpoint | Used For |
+|---|---|---|
+| `GET` | `/api/dsm-images/results/:filename` | Read finished DSM result JSON |
+
+The vendor may still operate the full DSM workflow separately:
+
+| Method | Endpoint | Purpose |
+|---|---|---|
+| `GET` | `/api/dsm` | List DSM files |
+| `GET` | `/api/dsm/:id` | Get one DSM file |
+| `POST` | `/api/dsm/upload` | Upload DSM file |
+| `POST` | `/api/dsm/start-detect/:id` | Start recognition |
+| `GET` | `/api/dsm/jobs/:jobId` | Read job status |
+| `GET` | `/api/dsm/jobs/pending` | List pending jobs |
+
+### Preview Endpoint In This System
+
+The frontend calls this API before project creation to show whether DSM data is available:
+
+```bash
+GET /external/dsm/preview?location=台2線70.1K%20平浪橋南側&date=2024-06-03
+```
+
+Response shape:
+
+```json
+{
+  "available": true,
+  "message": "已讀取 2 筆 DSM 影像辨識資料",
+  "source_url": "http://localhost:3000/api/dsm-images/results/19_result.json",
+  "records": [
+    {
+      "id": "dsm:1",
+      "label": "DSM影像辨識_fall_1",
+      "text": "DSM 影像辨識外部資料...",
+      "class_name": "fall",
+      "confidence": 0.91
+    }
+  ]
+}
+```
+
+### Anthropic Alternative
+
+If the vendor wants to use Anthropic instead of OpenAI for answer generation or VLM parsing, fill:
+
+```bash
+LLM_PROVIDER=anthropic
+ANTHROPIC_API_KEY=<vendor-anthropic-key>
+ANTHROPIC_MODEL=claude-sonnet-4-5
+VLM_PROVIDER=anthropic
+ANTHROPIC_VISION_MODEL=claude-sonnet-4-5
+```
+
+Make sure the Anthropic account has active credits. If credits are insufficient, `/query` will fail when `LLM_PROVIDER=anthropic`.
+
+### Do Not Use In Production
+
+```bash
+QDRANT_PATH=./qdrant_data
+```
+
+`QDRANT_PATH` is only for local file-mode testing. In vendor handoff, keep it commented out and use `QDRANT_URL` so vectors are stored in the Qdrant service.
 
 ### 3. Start backend
 
