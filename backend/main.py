@@ -676,6 +676,250 @@ def _find_option_metadata(options: ProjectFilterOptions, group: str, value: str 
     return {}
 
 
+def _string_value(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _extract_date_token(value: str | None) -> str | None:
+    if not value:
+        return None
+    match = re.search(r"\d{4}-\d{2}-\d{2}", value)
+    return match.group(0) if match else None
+
+
+def _match_value(query: str | None, candidate: str | None, *, is_date: bool = False) -> bool:
+    query_text = _string_value(query)
+    if not query_text:
+        return True
+    candidate_text = _string_value(candidate)
+    if not candidate_text:
+        return False
+
+    if is_date:
+        query_token = _extract_date_token(query_text)
+        candidate_token = _extract_date_token(candidate_text)
+        if query_token and candidate_token and query_token == candidate_token:
+            return True
+
+    q = query_text.casefold()
+    c = candidate_text.casefold()
+    return q == c or q in c
+
+
+def _extract_list_payload(data: object) -> list[dict]:
+    if isinstance(data, list):
+        return [item for item in data if isinstance(item, dict)]
+    if not isinstance(data, dict):
+        return []
+    for key in ("response", "results", "items", "data"):
+        value = data.get(key)
+        if isinstance(value, list):
+            return [item for item in value if isinstance(item, dict)]
+    return []
+
+
+def _first_present_text(entry: dict, keys: tuple[str, ...]) -> str | None:
+    for key in keys:
+        value = _string_value(entry.get(key))
+        if value:
+            return value
+    return None
+
+
+def _is_completed_entry(entry: dict) -> bool:
+    status = _first_present_text(entry, ("jobStatus", "status"))
+    if not status:
+        return True
+    status_key = status.casefold()
+    if any(token in status_key for token in ("failed", "error", "pending", "running", "process", "queue")):
+        return False
+    return any(token in status_key for token in ("completed", "success", "done", "finish", "ok"))
+
+
+def _extract_location_text(entry: dict) -> str | None:
+    return _first_present_text(entry, ("location", "region", "site", "road", "roadName", "roadSection"))
+
+
+def _extract_date_text(entry: dict) -> str | None:
+    return _first_present_text(entry, ("date", "dates", "eventDate", "captureDate", "reportDate"))
+
+
+def _extract_updated_at(entry: dict) -> str:
+    for key in ("updatedAt", "finishDatetime", "endTime", "uploadDatetime", "createdAt", "startDatetime"):
+        value = _string_value(entry.get(key))
+        if value:
+            return value
+    return ""
+
+
+def _extract_int_value(entry: dict, keys: tuple[str, ...]) -> int | None:
+    for key in keys:
+        raw = entry.get(key)
+        if raw is None:
+            continue
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _extract_result_paths(entry: dict) -> tuple[str | None, str | None, int | None]:
+    json_path = _first_present_text(entry, (
+        "outputJsonPath",
+        "output_json_path",
+        "dsm_result_json_path",
+        "resultJsonPath",
+    ))
+    if not json_path:
+        filename = _first_present_text(entry, ("outputJsonFilename", "output_json_filename", "dsm_result_json_filename"))
+        if filename:
+            json_path = f"/api/dsm-images/results/{filename}"
+
+    image_path = _first_present_text(entry, (
+        "outputImagePath",
+        "output_image_path",
+        "dsm_result_image_path",
+        "resultImagePath",
+    ))
+
+    job_id = _extract_int_value(entry, ("dsmJobId", "jobId", "currentJobId"))
+    if job_id and not json_path:
+        json_path = f"/api/dsm-images/results/{job_id}_result.json"
+    if job_id and not image_path:
+        image_path = f"/api/dsm-images/results/{job_id}_result.jpg"
+
+    return json_path, image_path, job_id
+
+
+def _fetch_external_dsm_entries() -> list[dict]:
+    base_url = _dsm_base_url()
+    url = _join_external_url(base_url, "/api/dsm")
+    with httpx.Client(timeout=float(os.getenv("DSM_API_TIMEOUT", "8"))) as client:
+        resp = client.get(url)
+        resp.raise_for_status()
+        payload = resp.json()
+    return _extract_list_payload(payload)
+
+
+def _dynamic_dsm_reference(location: str | None, date: str | None) -> dict:
+    entries = _fetch_external_dsm_entries()
+    matched: list[tuple[str, dict]] = []
+
+    for entry in entries:
+        if not _is_completed_entry(entry):
+            continue
+
+        loc = _extract_location_text(entry)
+        dt = _extract_date_text(entry)
+        if not _match_value(location, loc):
+            continue
+        if not _match_value(date, dt, is_date=True):
+            continue
+
+        json_path, image_path, job_id = _extract_result_paths(entry)
+        if not json_path:
+            continue
+
+        matched.append((_extract_updated_at(entry), {
+            "source": "dsm_api",
+            "dsm_job_id": job_id,
+            "location": loc,
+            "date": dt,
+            "resolved_json_path": json_path,
+            "resolved_image_path": image_path,
+            "job_status": _first_present_text(entry, ("jobStatus", "status")),
+            "updated_at": _extract_updated_at(entry),
+        }))
+
+    if not matched:
+        return {}
+
+    matched.sort(key=lambda item: item[0], reverse=True)
+    return matched[0][1]
+
+
+def _merge_project_options(static_options: list[ProjectOption], dynamic_options: list[ProjectOption]) -> list[ProjectOption]:
+    merged: list[ProjectOption] = [ProjectOption(**option.model_dump()) for option in static_options]
+    by_value: dict[str, int] = {option.value: idx for idx, option in enumerate(merged)}
+
+    for option in dynamic_options:
+        idx = by_value.get(option.value)
+        if idx is None:
+            merged.append(option)
+            by_value[option.value] = len(merged) - 1
+            continue
+
+        merged[idx] = ProjectOption(
+            value=merged[idx].value,
+            label=merged[idx].label or option.label,
+            metadata={
+                **(merged[idx].metadata or {}),
+                **(option.metadata or {}),
+            },
+        )
+    return merged
+
+
+def _dynamic_project_filter_options() -> ProjectFilterOptions:
+    entries = _fetch_external_dsm_entries()
+    location_candidates: dict[str, tuple[str, ProjectOption]] = {}
+    date_candidates: dict[str, tuple[str, ProjectOption]] = {}
+
+    for entry in entries:
+        if not _is_completed_entry(entry):
+            continue
+        json_path, image_path, job_id = _extract_result_paths(entry)
+        if not json_path:
+            continue
+
+        updated_at = _extract_updated_at(entry)
+        location = _extract_location_text(entry)
+        date = _extract_date_text(entry)
+        metadata = {
+            "source": "dsm_api",
+            "dsm_job_id": job_id,
+            "dsm_result_json_path": json_path,
+            "dsm_result_image_path": image_path,
+            "updated_at": updated_at,
+        }
+
+        if location:
+            option = ProjectOption(value=location, label=location, metadata={**metadata, "location": location, "date": date})
+            prev = location_candidates.get(location)
+            if prev is None or updated_at > prev[0]:
+                location_candidates[location] = (updated_at, option)
+
+        if date:
+            option = ProjectOption(value=date, label=date, metadata={**metadata, "location": location, "date": date})
+            prev = date_candidates.get(date)
+            if prev is None or updated_at > prev[0]:
+                date_candidates[date] = (updated_at, option)
+
+    return ProjectFilterOptions(
+        locations=[item[1] for item in sorted(location_candidates.values(), key=lambda value: value[0], reverse=True)],
+        dates=[item[1] for item in sorted(date_candidates.values(), key=lambda value: value[0], reverse=True)],
+        perspectives=[],
+    )
+
+
+def _combined_project_filter_options() -> ProjectFilterOptions:
+    static_options = _load_project_filter_options()
+    try:
+        dynamic_options = _dynamic_project_filter_options()
+    except Exception:
+        return static_options
+
+    return ProjectFilterOptions(
+        locations=_merge_project_options(static_options.locations, dynamic_options.locations),
+        dates=_merge_project_options(static_options.dates, dynamic_options.dates),
+        perspectives=static_options.perspectives,
+    )
+
+
 def _dsm_base_url() -> str:
     return os.getenv("DSM_API_BASE_URL", os.getenv("EXTERNAL_VISION_API_URL", "http://localhost:3000")).rstrip("/")
 
@@ -689,6 +933,13 @@ def _join_external_url(base_url: str, path: str) -> str:
 
 
 def _external_dsm_reference(location: str | None, date: str | None) -> dict:
+    try:
+        dynamic_ref = _dynamic_dsm_reference(location, date)
+    except Exception:
+        dynamic_ref = {}
+    if dynamic_ref.get("resolved_json_path"):
+        return dynamic_ref
+
     options = _load_project_filter_options()
     metadata = {
         **_find_option_metadata(options, "locations", location),
@@ -709,6 +960,7 @@ def _external_dsm_reference(location: str | None, date: str | None) -> dict:
         metadata["resolved_json_path"] = str(output_json_path)
     elif output_json_filename:
         metadata["resolved_json_path"] = f"/api/dsm-images/results/{output_json_filename}"
+    metadata.setdefault("source", "project_filter_options")
     return metadata
 
 
@@ -726,7 +978,7 @@ def _candidate_detection_lists(data: object) -> list:
         return data
     if not isinstance(data, dict):
         return []
-    for key in ("detections", "objects", "instances", "results", "items", "features"):
+    for key in ("predictions", "detections", "objects", "instances", "results", "items", "features"):
         value = data.get(key)
         if isinstance(value, list):
             return value
@@ -940,8 +1192,8 @@ def _build_ingest_candidates(graph: ExtractedKnowledgeGraph, filename: str) -> t
 
 @app.get("/project/filter-options", response_model=ProjectFilterOptions)
 def project_filter_options():
-    """Dropdown source for project metadata; can be swapped to an external API later."""
-    return _load_project_filter_options()
+    """Dropdown source for project metadata, preferred from DSM API with static fallback."""
+    return _combined_project_filter_options()
 
 
 @app.get("/external/dsm/preview", response_model=ExternalVisionPreviewResponse)
