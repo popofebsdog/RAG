@@ -17,7 +17,7 @@
               :class="selectedDoc === doc.filename
                 ? 'bg-surface border border-border shadow-sm'
                 : 'border border-transparent hover:bg-black/[0.04]'"
-              @click="selectDoc(doc.filename)"
+              @click="handleDocClick(doc.filename)"
             >
               <p class="text-[12px] truncate" :class="selectedDoc === doc.filename ? 'text-ink font-medium' : 'text-sub'">
                 {{ doc.filename }}
@@ -63,7 +63,7 @@
             <div>
               <h3 class="text-[14px] font-medium text-ink">{{ selectedDoc || (lang === 'zh' ? '從左側選擇文件' : 'Select a document from the left') }}</h3>
               <p class="text-[11px] text-faint mt-0.5">
-                {{ lang === 'zh' ? 'PDF 原檔畫面；在頁面上拖曳框選，VLM 讀圖後可確認建立知識節點。' : 'Original PDF view. Drag on a page to capture an area, then review the VLM result before creating a knowledge node.' }}
+                {{ readerHintText }}
               </p>
             </div>
             <div class="flex items-center gap-3">
@@ -78,7 +78,6 @@
           </div>
 
           <div
-            ref="readerEl"
             class="reader-body flex-1 min-h-0 overflow-y-auto bg-[#E9E5DC] px-6 py-6"
             @pointerdown="onPointerDown"
             @pointermove="onPointerMove"
@@ -113,6 +112,15 @@
                 <span>{{ renderStatus }}</span>
               </div>
 
+              <div
+                v-if="selectedDsmImageUrl"
+                class="sticky top-0 z-20 mb-3 flex items-center gap-2 rounded-lg border px-3 py-2 text-[12px] shadow-sm"
+                style="background:rgba(236,254,255,0.92);border-color:#A5F3FC;color:#0E7490"
+              >
+                <span class="inline-block h-2 w-2 rounded-full bg-cyan-500" />
+                <span>{{ lang === 'zh' ? 'DSM 辨識影像，可直接拖曳框選。' : 'DSM recognition image. Drag to create a selection.' }}</span>
+              </div>
+
               <div class="pdfViewer mx-auto flex w-fit flex-col gap-5">
                 <div
                   v-for="page in pdfPages"
@@ -124,12 +132,12 @@
                   :style="{ width: `${page.width}px` }"
                 >
                   <div class="relative select-none" :style="{ width: `${page.width}px`, height: `${page.height}px` }">
-                    <div class="page-badge absolute left-2 top-2 z-20 rounded bg-black/55 px-2 py-0.5 text-[10px] font-mono text-white">
+                    <div v-if="!selectedDsmImageUrl" class="page-badge absolute left-2 top-2 z-20 rounded bg-black/55 px-2 py-0.5 text-[10px] font-mono text-white">
                       Page {{ page.pageNum }}
                     </div>
                     <img
                       :ref="(el) => setImageRef(page.pageNum, el)"
-                      :src="selectedDoc ? pageImageUrl(selectedDoc, page.pageNum) : ''"
+                      :src="pageImageSrc(page.pageNum)"
                       class="absolute inset-0"
                       :style="{ width: `${page.width}px`, height: `${page.height}px` }"
                       :alt="`Page ${page.pageNum}`"
@@ -260,18 +268,20 @@ const props = defineProps<{
   pageImageUrl: (filename: string, pageNum: number) => string
   fetchPdfInfo: (filename: string) => Promise<PDFInfo>
   analyzeSelection: (req: { image_b64: string; source_doc: string; source_page: number }) => Promise<VLMSelectionResponse>
-  createManualChunk: (req: { text: string; label: string; source_doc: string; source_page?: number; source_anchor?: string | null }) => Promise<ManualChunkInfo>
+  createManualChunk: (req: { text: string; label: string; source_doc: string; source_page?: number; source_anchor?: string | null; metadata?: Record<string, unknown> }) => Promise<ManualChunkInfo>
   deleteManualChunk: (chunkId: string) => Promise<void>
 }>()
 
 const emit = defineEmits<{ close: [] }>()
 
-const readerEl = ref<HTMLElement | null>(null)
+const lang = computed(() => props.lang)
+
 const selectedDoc = ref<string | null>(null)
 const selectedPage = ref<number | null>(null)
 const loading = ref(false)
 const pdfAvailable = ref(false)
 const pdfError = ref('')
+const selectedDsmImageUrl = ref('')
 const pdfPages = ref<PdfPageView[]>([])
 const renderStatus = ref('')
 const focusedChunkId = ref<string | null>(null)
@@ -296,6 +306,14 @@ const docManualChunks = computed(() =>
   props.manualChunks.filter((mc) => !selectedDoc.value || mc.source_doc === selectedDoc.value),
 )
 
+const dsmChunks = computed(() =>
+  props.manualChunks.filter((chunk) => Boolean(chunkExternalVisionImageUrl(chunk))),
+)
+
+const dsmDocNameSet = computed(() =>
+  new Set(dsmChunks.value.map((chunk) => chunk.source_doc).filter((name) => Boolean(name))),
+)
+
 const selectionRectStyle = computed(() => {
   if (!selectionRect.value) return {}
   return {
@@ -313,17 +331,34 @@ const canSubmitSelection = computed(() =>
   && selectionDescription.value.trim().length > 0,
 )
 
+const readerHintText = computed(() => {
+  if (selectedDsmImageUrl.value) {
+    return lang.value === 'zh'
+      ? 'DSM 辨識影像畫面；可直接拖曳框選，VLM 讀圖後可確認建立知識節點。'
+      : 'DSM result image view. Drag to select an area, then review the VLM result before creating a knowledge node.'
+  }
+  return lang.value === 'zh'
+    ? 'PDF 原檔畫面；在頁面上拖曳框選，VLM 讀圖後可確認建立知識節點。'
+    : 'Original PDF view. Drag on a page to capture an area, then review the VLM result before creating a knowledge node.'
+})
+
+const selectedDsmImagePath = computed(() => {
+  if (!selectedDsmImageUrl.value) return ''
+  const directPath = selectedDsmImageUrl.value.match(/\/api\/dsm-images\/results\/[^?]+/)
+  return directPath ? directPath[0] : selectedDsmImageUrl.value
+})
+
 watch(() => props.show, (v) => {
   if (!v) {
     resetReader()
   } else if (props.target?.sourceDoc) {
-    selectDoc(props.target.sourceDoc, props.target.page || null)
+    handleDocClick(props.target.sourceDoc, props.target.page || null)
   }
 })
 
 watch(() => props.target, (target) => {
   if (!props.show || !target?.sourceDoc) return
-  selectDoc(target.sourceDoc, target.page || null)
+  handleDocClick(target.sourceDoc, target.page || null)
 }, { deep: true })
 
 watch(() => props.docs.map((doc) => doc.filename), (filenames) => {
@@ -336,6 +371,7 @@ function resetReader() {
   selectedPage.value = null
   pdfAvailable.value = false
   pdfError.value = ''
+  selectedDsmImageUrl.value = ''
   renderStatus.value = ''
   pdfPages.value = []
   imageRefs.clear()
@@ -369,6 +405,11 @@ function onPageImageLoad(pageNum: number, event: Event) {
   )
 }
 
+function pageImageSrc(pageNum: number): string {
+  if (selectedDsmImageUrl.value && pageNum === 1) return selectedDsmImagePath.value || selectedDsmImageUrl.value
+  return selectedDoc.value ? props.pageImageUrl(selectedDoc.value, pageNum) : ''
+}
+
 async function selectDoc(filename: string, page: number | null = null) {
   selectedDoc.value = filename
   selectedPage.value = page
@@ -379,6 +420,7 @@ async function selectDoc(filename: string, page: number | null = null) {
   pdfPages.value = []
   imageRefs.clear()
   pageRefs.clear()
+  selectedDsmImageUrl.value = ''
   closeSelectionModal()
   const token = ++renderToken
 
@@ -399,6 +441,39 @@ async function selectDoc(filename: string, page: number | null = null) {
   } finally {
     if (token === renderToken) loading.value = false
   }
+}
+
+async function selectExternalVisionDoc(filename: string, imageUrl: string) {
+  selectedDoc.value = filename
+  selectedPage.value = 1
+  loading.value = false
+  pdfAvailable.value = true
+  pdfError.value = ''
+  renderStatus.value = ''
+  imageRefs.clear()
+  pageRefs.clear()
+  selectedDsmImageUrl.value = imageUrl
+  pdfPages.value = [{ pageNum: 1, width: 860, height: 860, scale: 1 }]
+  closeSelectionModal()
+  renderToken += 1
+  await nextTick()
+}
+
+function findFirstDsmChunkByDoc(filename: string): ManualChunkInfo | null {
+  return dsmChunks.value.find((chunk) => chunk.source_doc === filename) ?? null
+}
+
+async function handleDocClick(filename: string, page: number | null = null) {
+  if (dsmDocNameSet.value.has(filename)) {
+    const firstDsmChunk = findFirstDsmChunkByDoc(filename)
+    const imageUrl = firstDsmChunk ? chunkExternalVisionImageUrl(firstDsmChunk) : ''
+    if (firstDsmChunk && imageUrl) {
+      focusedChunkId.value = firstDsmChunk.chunk_id
+      await selectExternalVisionDoc(filename, imageUrl)
+      return
+    }
+  }
+  await selectDoc(filename, page)
 }
 
 async function loadPdf(filename: string, token: number) {
@@ -486,8 +561,17 @@ async function analyzeCroppedSelection(rect: SelectionRect) {
   cropCanvas.height = sh
   const ctx = cropCanvas.getContext('2d')
   if (!ctx) return
-  ctx.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh)
-  selectionImage.value = cropCanvas.toDataURL('image/png')
+  try {
+    ctx.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh)
+    selectionImage.value = cropCanvas.toDataURL('image/png')
+  } catch {
+    selectionError.value = props.lang === 'zh'
+      ? '無法讀取框選影像，請確認 DSM 圖片來源可由目前系統存取。'
+      : 'Could not capture the selected area. Ensure the DSM image is accessible from this app.'
+    selectionModalOpen.value = true
+    selectionAnalyzing.value = false
+    return
+  }
   selectionPage.value = rect.pageNum
   selectionLabel.value = ''
   selectionDescription.value = ''
@@ -529,12 +613,21 @@ async function submitSelectionChunk() {
   submitting.value = true
   const label = selectionLabel.value.trim()
   try {
+    const metadata = selectedDsmImageUrl.value
+      ? {
+          external_source: 'dsm_api',
+          source_image_url: selectedDsmImageUrl.value,
+          dsm_result_image_url: selectedDsmImageUrl.value,
+          dsm_result_image_path: selectedDsmImagePath.value,
+        }
+      : {}
     await props.createManualChunk({
       text: selectionDescription.value.trim(),
       label,
       source_doc: selectedDoc.value,
       source_page: selectionPage.value,
       source_anchor: selectionPage.value ? `^p${selectionPage.value}` : null,
+      metadata,
     })
     successMsg.value = props.lang === 'zh' ? `「${label}」已建立` : `"${label}" created`
     setTimeout(() => { successMsg.value = '' }, 3000)
@@ -552,6 +645,12 @@ function chunkPage(chunk: ManualChunkInfo): number {
 
 async function goToChunkSource(chunk: ManualChunkInfo) {
   const page = chunkPage(chunk)
+  const dsmImageUrl = chunkExternalVisionImageUrl(chunk)
+  if (dsmImageUrl) {
+    focusedChunkId.value = chunk.chunk_id
+    await selectExternalVisionDoc(chunk.source_doc || (props.lang === 'zh' ? 'DSM 影像辨識資料' : 'DSM vision data'), dsmImageUrl)
+    return
+  }
   focusedChunkId.value = chunk.chunk_id
   if (chunk.source_doc && chunk.source_doc !== selectedDoc.value) {
     await selectDoc(chunk.source_doc, page || null)
@@ -569,6 +668,12 @@ async function scrollToPage(page: number) {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value))
+}
+
+function chunkExternalVisionImageUrl(chunk: ManualChunkInfo): string {
+  const metadata = chunk.metadata ?? {}
+  const imageUrl = metadata.dsm_result_image_path || metadata.source_image_path || metadata.dsm_result_image_url || metadata.source_image_url
+  return typeof imageUrl === 'string' ? imageUrl : ''
 }
 
 onUnmounted(() => {

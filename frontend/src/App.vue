@@ -288,7 +288,7 @@ const {
   ingestResult, ingestPreview, queryResult, umapResult, graphAnalysisResult,
   projectFiles, manualChunks, error, projectFilterOptions,
   projects, activeProjectId, activeProject,
-  createProject, fetchProjectFilterOptions, fetchExternalVisionPreview, switchProject, deleteProject,
+  createProject, fetchProjectsFromBackend, fetchProjectFilterOptions, fetchExternalVisionPreview, switchProject, deleteProject,
   ingestPdf, commitIngestPreview, discardIngestPreview, removeProjectFile, clearProject,
   pdfUrl, pageImageUrl, analyzeSelection, createManualChunk, deleteManualChunk, fetchManualChunks,
   relations, fetchRelations, createRelation, updateRelationWeight, deleteRelation,
@@ -441,6 +441,7 @@ async function runQuery(question: string) {
 }
 
 onMounted(async () => {
+  await fetchProjectsFromBackend()
   await fetchProjectFilterOptions()
   if (activeProjectId.value) {
     await Promise.all([fetchProjectFiles(), fetchManualChunks(), fetchRelations()])

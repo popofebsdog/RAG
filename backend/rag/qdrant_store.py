@@ -151,6 +151,7 @@ class QdrantStore:
         embedding: np.ndarray,
         label: str,
         meta: DocMeta | None = None,
+        metadata: dict | None = None,
     ) -> None:
         from qdrant_client.models import PointStruct
 
@@ -171,6 +172,7 @@ class QdrantStore:
             "is_manual": True,
             "node_type": "manual",
             "hazard_tags": detect_hazard_tags(f"{label}\n{chunk.text}"),
+            "metadata": metadata or {},
         }
         self.client.upsert(
             collection_name=self.COLLECTION,

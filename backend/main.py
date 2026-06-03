@@ -57,7 +57,7 @@ PENDING_INGEST_DIR = os.path.join(os.path.dirname(__file__), "data", "pending_in
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:5174", "http://localhost:5175", "http://localhost:5180", "http://localhost:3000"],
+    allow_origins=["http://localhost:5173", "http://localhost:5174", "http://localhost:5175", "http://localhost:5180", "http://localhost:3000", "http://210.71.208.244:5173/"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -98,6 +98,16 @@ class DocInfo(BaseModel):
 class ProjectFilesResponse(BaseModel):
     files: list[DocInfo]
     total_chunks: int
+
+
+class ProjectListItem(BaseModel):
+    project_id: str
+    name: str
+    region: str | None = None
+    year: int | None = None
+    date: str | None = None
+    perspective: str | None = None
+    created_at: int | None = None
 
 
 class ProjectOption(BaseModel):
@@ -361,6 +371,7 @@ class ManualChunkRequest(BaseModel):
     region: str | None = None
     year: int | None = None
     perspective: str | None = None
+    metadata: dict = Field(default_factory=dict)
 
 
 class ManualChunkInfo(BaseModel):
@@ -375,6 +386,7 @@ class ManualChunkInfo(BaseModel):
     year: int | None = None
     perspective: str | None = None
     node_type: str = "manual"
+    metadata: dict = Field(default_factory=dict)
 
 
 # ── Page models ──────────────────────────────────────────────────────────────
@@ -656,6 +668,24 @@ def _upsert_extracted_knowledge_graph(
 def health():
     store = get_store()
     return {"status": "ok", "indexed_chunks": store.chunk_count}
+
+
+@app.get("/projects", response_model=list[ProjectListItem])
+def list_projects():
+    rows = postgres_store.list_projects()
+    items: list[ProjectListItem] = []
+    for row in rows:
+        metadata = row.get("metadata") or {}
+        items.append(ProjectListItem(
+            project_id=str(row.get("id") or ""),
+            name=str(row.get("name") or row.get("id") or ""),
+            region=metadata.get("region"),
+            year=metadata.get("year"),
+            date=metadata.get("date"),
+            perspective=metadata.get("perspective"),
+            created_at=row.get("created_at_ms"),
+        ))
+    return items
 
 
 def _load_project_filter_options() -> ProjectFilterOptions:
@@ -1118,6 +1148,8 @@ def _import_external_vision_nodes(project_id: str, location: str | None, date: s
                 "source_url": source_url,
                 "source_image_path": source_image_path,
                 "source_image_url": source_image_url,
+                "dsm_result_image_path": source_image_path,
+                "dsm_result_image_url": source_image_url,
                 "location": location,
                 "date": date,
                 "reference": ref,
@@ -1218,6 +1250,37 @@ def external_dsm_preview(location: str | None = None, date: str | None = None):
             source_url=None,
             records=[],
         )
+
+
+@app.get("/dsm-images/{asset_path:path}")
+def proxy_dsm_images(asset_path: str):
+    """Proxy DSM static assets (images/json) from the external DSM API."""
+    base_url = _dsm_base_url()
+    upstream_paths = [
+        f"/dsm-images/{asset_path}",
+        f"/api/dsm-images/{asset_path}",
+    ]
+    tried_urls: list[str] = []
+    try:
+        with httpx.Client(timeout=float(os.getenv("DSM_API_TIMEOUT", "8"))) as client:
+            last_status = 404
+            for upstream_path in upstream_paths:
+                upstream_url = _join_external_url(base_url, upstream_path)
+                tried_urls.append(upstream_url)
+                resp = client.get(upstream_url)
+                if resp.status_code == 404:
+                    last_status = 404
+                    continue
+                if resp.status_code >= 400:
+                    raise HTTPException(resp.status_code, f"DSM asset fetch failed: HTTP {resp.status_code}")
+                media_type = resp.headers.get("content-type") or "application/octet-stream"
+                return Response(content=resp.content, media_type=media_type)
+        if last_status == 404:
+            raise HTTPException(404, f"DSM asset not found: {asset_path} (tried: {', '.join(tried_urls)})")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(502, f"DSM asset proxy failed: {exc}") from exc
 
 
 @app.post("/projects/upsert")
@@ -1864,7 +1927,7 @@ def create_manual_chunk(req: ManualChunkRequest):
         perspective=req.perspective,
         project_id=req.project_id,
     )
-    get_store().upsert_manual(chunk, embedding, req.label, meta)
+    get_store().upsert_manual(chunk, embedding, req.label, meta, metadata=req.metadata)
 
     return ManualChunkInfo(
         chunk_id=chunk_id,
@@ -1878,6 +1941,7 @@ def create_manual_chunk(req: ManualChunkRequest):
         year=req.year,
         perspective=req.perspective,
         node_type="manual",
+        metadata=req.metadata,
     )
 
 
@@ -1897,6 +1961,7 @@ def list_manual_chunks(project_id: str = "default"):
             year=p.get("year"),
             perspective=p.get("perspective"),
             node_type=p.get("node_type") or "manual",
+            metadata=p.get("metadata") or {},
         )
         for p in payloads
     ]

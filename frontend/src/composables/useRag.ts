@@ -17,6 +17,7 @@ import type {
   VLMSelectionRequest,
   VLMSelectionResponse,
   Project,
+  ProjectListItem,
   ProjectFilterOptions,
   ExternalVisionPreviewResponse,
   ChunkRelation,
@@ -189,6 +190,44 @@ export function useRag() {
       projects.value[idx] = { ...projects.value[idx], name, meta: normalizeMeta(meta) }
       saveProjects(projects.value)
       void persistProject(projects.value[idx])
+    }
+  }
+
+  async function fetchProjectsFromBackend(): Promise<void> {
+    try {
+      const { data } = await axios.get<ProjectListItem[]>(`${BASE}/projects`)
+      const mapped: Project[] = (data ?? []).map((item) => ({
+        id: item.project_id,
+        name: item.name,
+        meta: normalizeMeta({
+          region: item.region ?? undefined,
+          year: item.year ?? undefined,
+          date: item.date ?? undefined,
+          perspective: item.perspective ?? undefined,
+        }),
+        createdAt: item.created_at ?? Date.now(),
+      }))
+
+      projects.value = mapped
+      saveProjects(mapped)
+
+      const prev = activeProjectId.value
+      const hasPrev = Boolean(prev && mapped.some((p) => p.id === prev))
+      const next = hasPrev ? prev : (mapped[0]?.id ?? null)
+      activeProjectId.value = next
+      if (next) localStorage.setItem(ACTIVE_PROJECT_KEY, next)
+      else localStorage.removeItem(ACTIVE_PROJECT_KEY)
+      resetProjectScopedState()
+    } catch {
+      // Fallback to local cache if backend list is unavailable.
+      const cached = loadProjects()
+      projects.value = cached
+      const prev = activeProjectId.value
+      const hasPrev = Boolean(prev && cached.some((p) => p.id === prev))
+      const next = hasPrev ? prev : (cached[0]?.id ?? null)
+      activeProjectId.value = next
+      if (next) localStorage.setItem(ACTIVE_PROJECT_KEY, next)
+      else localStorage.removeItem(ACTIVE_PROJECT_KEY)
     }
   }
 
@@ -551,6 +590,7 @@ export function useRag() {
     projects,
     activeProjectId,
     activeProject,
+    fetchProjectsFromBackend,
     createProject,
     fetchProjectFilterOptions,
     fetchExternalVisionPreview,

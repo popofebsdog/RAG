@@ -14,6 +14,7 @@
       :lang="lang"
       :threshold="threshold"
       :active="activeTab === 'graph-analysis'"
+      :page-image-url="pageImageUrl"
       :create-relation="createRelation"
       :update-relation-weight="updateRelationWeight"
       :delete-relation="deleteRelation"

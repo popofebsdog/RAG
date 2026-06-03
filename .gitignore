@@ -8,7 +8,7 @@
 venv/
 __pycache__/
 *.py[cod]
-
+node_modules/
 # Frontend dependencies and build output
 frontend/node_modules/
 frontend/dist/
@@ -33,3 +33,8 @@ backend/images_cache/
 # Generated test PDFs can be rebuilt from scripts
 test_artifacts/*.pdf
 test_artifacts/.DS_Store
+package-lock.json
+frontend/package-lock.json
+frontend/package-lock.json
+frontend/package-lock.json
+frontend/package-lock.json

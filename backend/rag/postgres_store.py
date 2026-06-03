@@ -163,6 +163,21 @@ def ensure_project(project_id: str, name: str | None = None, metadata: dict[str,
         )
 
 
+def list_projects() -> list[dict]:
+    if not is_enabled():
+        return []
+    with connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT id, name, metadata,
+                   CAST(EXTRACT(EPOCH FROM created_at) * 1000 AS BIGINT) AS created_at_ms
+            FROM projects
+            ORDER BY created_at DESC, id
+            """
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
 def upsert_document(
     project_id: str,
     filename: str,

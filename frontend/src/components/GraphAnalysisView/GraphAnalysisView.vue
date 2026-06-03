@@ -32,27 +32,8 @@
 
         <section>
           <p class="section-label">{{ lang === 'zh' ? '選取知識節點' : 'Selected Knowledge Node' }}</p>
-          <div v-if="selected" class="rounded-lg border p-3 space-y-2" style="border-color:#D7DEE8;background:#FFFFFF">
-            <div class="flex items-start justify-between gap-2">
-              <div class="min-w-0">
-                <p class="text-[14px] font-semibold truncate" style="color:#172033">{{ nodeTitle(selected.id) }}</p>
-                <p class="text-[12px] truncate" style="color:#667085">{{ selected.id }}</p>
-              </div>
-              <span class="node-type">{{ displayNodeType(selected) }}</span>
-            </div>
-            <div class="flex flex-wrap gap-1.5">
-              <span v-if="selected.source_doc" class="meta-chip">{{ selected.source_doc }}</span>
-              <span v-if="selected.page > 0" class="meta-chip">p{{ selected.page }}</span>
-              <span v-for="tag in selected.hazard_tags" :key="tag" class="hazard-chip">{{ tag }}</span>
-            </div>
-            <p class="line-clamp-3 text-[13px] leading-relaxed" style="color:#41546F">{{ selected.text }}</p>
-            <div class="grid grid-cols-2 gap-2">
-              <button class="action-button" @click="fromId = selected.id">{{ lang === 'zh' ? '設為起點知識節點' : 'Set source' }}</button>
-              <button class="action-button" @click="toId = selected.id">{{ lang === 'zh' ? '設為終點知識節點' : 'Set target' }}</button>
-            </div>
-          </div>
-          <div v-else class="empty-box">
-            {{ lang === 'zh' ? '尚未選取知識節點' : 'No knowledge node selected' }}
+          <div class="empty-box">
+            {{ lang === 'zh' ? '請在圖譜上點擊知識節點，詳情會顯示在下方。' : 'Click a node in the graph to show details at the bottom.' }}
           </div>
         </section>
 
@@ -154,6 +135,73 @@
           <span>{{ lang === 'zh' ? '異常警示' : 'Anomaly alert' }}</span>
         </div>
       </div>
+
+      <Transition name="fade">
+        <div
+          v-if="selected"
+          class="node-detail-panel absolute bottom-4 left-3 right-3 rounded-xl p-3 text-[12px] shadow-sm border"
+          style="background:rgba(253,252,249,0.97);border-color:#E0DBD2"
+        >
+          <div class="grid h-full grid-cols-[minmax(0,0.95fr)_minmax(320px,1.15fr)] gap-3">
+            <div class="min-w-0 overflow-y-auto pr-1">
+              <div class="flex justify-between items-start mb-1.5">
+                <div class="flex min-w-0 items-center gap-2">
+                  <span class="node-type">{{ displayNodeType(selected) }}</span>
+                  <span class="min-w-0 truncate font-semibold text-[13px]" style="color:#2C2926">{{ nodeTitle(selected.id) }}</span>
+                </div>
+                <button class="icon-button" :aria-label="lang === 'zh' ? '關閉節點詳情' : 'Close node detail'" @click="selected = null">x</button>
+              </div>
+              <div class="flex gap-3 mb-2 flex-wrap" style="color:#667085">
+                <span v-if="selected.page > 0">p{{ selected.page }}</span>
+                <span v-if="selected.is_retrieved" class="text-green-700">{{ lang === 'zh' ? '已取回' : 'Retrieved' }}</span>
+                <span v-if="selected.node_type === 'external_vision'" class="text-cyan-700">{{ lang === 'zh' ? '外部影像辨識' : 'External vision' }}</span>
+                <span v-else-if="selected.is_manual" class="text-amber-500">{{ lang === 'zh' ? '知識節點' : 'Knowledge node' }}</span>
+              </div>
+              <div class="flex flex-wrap gap-1.5 mb-2">
+                <span v-if="selected.source_doc" class="meta-chip">{{ selected.source_doc }}</span>
+                <span v-for="tag in selected.hazard_tags" :key="tag" class="hazard-chip">{{ tag }}</span>
+              </div>
+              <div v-if="selectedDsmSourceUrl" class="text-[12px] break-all mb-2" style="color:#667085">
+                {{ lang === 'zh' ? 'DSM 來源：' : 'DSM source: ' }}{{ selectedDsmSourceUrl }}
+              </div>
+              <p class="leading-relaxed" style="color:#6B6660">{{ cleanDisplayText(selected.text) }}</p>
+              <div class="grid grid-cols-2 gap-2 mt-3">
+                <button class="action-button" @click="fromId = selected.id">{{ lang === 'zh' ? '設為起點知識節點' : 'Set source' }}</button>
+                <button class="action-button" @click="toId = selected.id">{{ lang === 'zh' ? '設為終點知識節點' : 'Set target' }}</button>
+              </div>
+            </div>
+
+            <div class="pdf-preview overflow-hidden rounded-lg border bg-white" style="border-color:#D7DEE8">
+              <div class="flex items-center justify-between border-b px-3 py-2" style="border-color:#D7DEE8">
+                <span class="truncate text-[12px] font-medium" style="color:#41546F">{{ selectedImageTitle }}</span>
+                <span v-if="selected.page > 0" class="shrink-0 text-[11px]" style="color:#667085">p{{ selected.page }}</span>
+              </div>
+              <div v-if="selectedDsmImageUrl" class="relative h-full min-h-[260px] overflow-auto bg-[#E9E5DC] p-2">
+                <img :src="selectedDsmImageUrl" class="pdf-page-canvas mx-auto block bg-white shadow-sm" :alt="nodeTitle(selected.id)" />
+              </div>
+              <div v-else-if="selectedPdfAvailable" class="relative h-full min-h-[260px] overflow-auto bg-[#E9E5DC] p-2">
+                <div v-if="pdfPreviewLoading" class="absolute inset-0 z-10 flex items-center justify-center bg-white/70 text-[12px]" style="color:#667085">
+                  {{ lang === 'zh' ? '載入原文頁面中…' : 'Loading source page…' }}
+                </div>
+                <div v-if="pdfPreviewError" class="absolute inset-0 z-10 flex items-center justify-center px-4 text-center text-[12px] bg-white" style="color:#B91C1C">
+                  {{ pdfPreviewError }}
+                </div>
+                <img
+                  v-if="selected.source_doc && selected.page > 0"
+                  :src="props.pageImageUrl(selected.source_doc, selected.page)"
+                  class="pdf-page-canvas mx-auto block bg-white shadow-sm"
+                  :alt="`p${selected.page}`"
+                  @load="pdfPreviewLoading = false"
+                  @error="onPreviewImageError"
+                />
+              </div>
+              <div v-else class="flex h-full min-h-[260px] items-center justify-center px-4 text-center text-[12px]" style="color:#667085">
+                {{ lang === 'zh' ? '這個知識節點沒有可定位的 PDF 頁面' : 'This knowledge node has no PDF source location' }}
+              </div>
+            </div>
+          </div>
+        </div>
+      </Transition>
     </main>
   </div>
 </template>
@@ -184,6 +232,7 @@ const props = defineProps<{
   lang: 'en' | 'zh'
   threshold: number
   active: boolean
+  pageImageUrl: (filename: string, pageNum: number) => string
   createRelation: (fromId: string, toId: string, label: string, weight?: number) => Promise<ChunkRelation>
   updateRelationWeight: (id: string, weight: number) => Promise<ChunkRelation>
   deleteRelation: (id: string) => Promise<void>
@@ -202,6 +251,8 @@ const relationLabel = ref('')
 const relationWeight = ref(1)
 const submitting = ref(false)
 const relationError = ref('')
+const pdfPreviewLoading = ref(false)
+const pdfPreviewError = ref('')
 let cy: cytoscape.Core | null = null
 
 const COMMUNITY_COLORS = [
@@ -231,6 +282,7 @@ const displayNodes = computed<GraphAnalysisNode[]>(() => {
       text: node.text,
       is_retrieved: false,
       is_manual: true,
+      metadata: {},
     }))
   return [...base, ...manualOnly].sort(compareNodeOrder)
 })
@@ -245,6 +297,26 @@ const visibleManualEdges = computed(() =>
   props.relations.filter((rel) => visibleNodeIds.value.has(rel.from_chunk_id) && visibleNodeIds.value.has(rel.to_chunk_id)),
 )
 const anomalyItems = computed(() => (props.queryResult?.anomalies ?? []).map(normalizeAnomaly))
+const selectedDsmImageUrl = computed(() => {
+  const node = selected.value
+  if (!node || node.node_type !== 'external_vision') return ''
+  const imageUrl = node.metadata?.source_image_url
+  return typeof imageUrl === 'string' ? imageUrl : ''
+})
+const selectedDsmSourceUrl = computed(() => {
+  const node = selected.value
+  if (!node || node.node_type !== 'external_vision') return ''
+  const sourceUrl = node.metadata?.source_url
+  return typeof sourceUrl === 'string' ? sourceUrl : ''
+})
+const selectedPdfAvailable = computed(() => {
+  const node = selected.value
+  return Boolean(node?.source_doc && node.page && node.page > 0)
+})
+const selectedImageTitle = computed(() => {
+  if (selectedDsmImageUrl.value) return props.lang === 'zh' ? 'DSM 結果影像' : 'DSM result image'
+  return selected.value?.source_doc || (props.lang === 'zh' ? '無原文檔案' : 'No source document')
+})
 const hasOutOfDomainAnomaly = computed(() =>
   (props.queryResult?.anomalies ?? []).some((item) => item.type === 'out_of_domain'),
 )
@@ -329,6 +401,11 @@ watch(() => props.active, async (active) => {
   refitGraph()
 })
 
+watch(selected, () => {
+  pdfPreviewError.value = ''
+  pdfPreviewLoading.value = selectedPdfAvailable.value && !selectedDsmImageUrl.value
+})
+
 onUnmounted(() => cy?.destroy())
 
 function nodeTitle(id: string) {
@@ -393,6 +470,20 @@ function refitGraph() {
   cy.resize()
   cy.fit(undefined, 90)
   cy.center()
+}
+
+function cleanDisplayText(text: string): string {
+  return String(text || '')
+    .replace(/\s*\^p\d+(?:-[\w\u4e00-\u9fff]+-\d+)?/g, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+}
+
+function onPreviewImageError() {
+  pdfPreviewLoading.value = false
+  pdfPreviewError.value = props.lang === 'zh'
+    ? '無法載入這一頁 PDF 原文'
+    : 'Could not load this PDF page'
 }
 
 function edgeKey(a: string, b: string): string {
@@ -1014,5 +1105,26 @@ function renderGraph() {
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+
+.dsm-image-preview {
+  max-width: 100%;
+  height: auto;
+}
+
+.fade-enter-active, .fade-leave-active { transition: opacity 0.2s; }
+.fade-enter-from, .fade-leave-to { opacity: 0; }
+
+.node-detail-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 200px;
+  height: 56vh;
+  max-height: 82vh;
+}
+
+.pdf-page-canvas {
+  max-width: 100%;
+  height: auto !important;
 }
 </style>

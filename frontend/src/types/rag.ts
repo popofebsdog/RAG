@@ -150,6 +150,7 @@ export interface ManualChunkRequest {
   region?: string
   year?: number
   perspective?: string
+  metadata?: Record<string, unknown>
 }
 
 export interface ManualChunkInfo {
@@ -164,6 +165,7 @@ export interface ManualChunkInfo {
   year: number | null
   perspective: string | null
   node_type?: string
+  metadata?: Record<string, unknown>
 }
 
 // ── Project types ─────────────────────────────────────────────────────────────
@@ -173,6 +175,16 @@ export interface Project {
   name: string
   meta: DocMetadata
   createdAt: number
+}
+
+export interface ProjectListItem {
+  project_id: string
+  name: string
+  region?: string | null
+  year?: number | null
+  date?: string | null
+  perspective?: string | null
+  created_at?: number | null
 }
 
 // ── Page types ────────────────────────────────────────────────────────────────
