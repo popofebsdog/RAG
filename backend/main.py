@@ -291,6 +291,7 @@ class GraphAnalysisNodeModel(BaseModel):
     text: str
     is_retrieved: bool = False
     is_manual: bool = False
+    metadata: dict = Field(default_factory=dict)
 
 
 class GraphAnalysisEdgeModel(BaseModel):
@@ -911,11 +912,11 @@ def _combined_project_filter_options() -> ProjectFilterOptions:
     try:
         dynamic_options = _dynamic_project_filter_options()
     except Exception:
-        return static_options
+        dynamic_options = ProjectFilterOptions()
 
     return ProjectFilterOptions(
-        locations=_merge_project_options(static_options.locations, dynamic_options.locations),
-        dates=_merge_project_options(static_options.dates, dynamic_options.dates),
+        locations=dynamic_options.locations,
+        dates=dynamic_options.dates,
         perspectives=static_options.perspectives,
     )
 
@@ -1093,6 +1094,8 @@ def _import_external_vision_nodes(project_id: str, location: str | None, date: s
     store = get_store()
     meta = DocMeta(region=location, year=year, perspective=perspective, project_id=project_id)
     imported = 0
+    source_image_path = ref.get("resolved_image_path")
+    source_image_url = _join_external_url(_dsm_base_url(), str(source_image_path)) if source_image_path else None
     for idx, record in enumerate(records, start=1):
         chunk_id = f"external-dsm:{_slugify(location or 'unknown')}:{_slugify(date or 'nodate')}:{idx}"
         chunk = Chunk(
@@ -1113,6 +1116,8 @@ def _import_external_vision_nodes(project_id: str, location: str | None, date: s
             metadata={
                 "external_source": "dsm_api",
                 "source_url": source_url,
+                "source_image_path": source_image_path,
+                "source_image_url": source_image_url,
                 "location": location,
                 "date": date,
                 "reference": ref,
@@ -2196,6 +2201,7 @@ def graph_analysis(req: GraphAnalysisRequest):
             text=n.text,
             is_retrieved=n.id in retrieved_ids,
             is_manual=n.id in manual_ids,
+            metadata=payload_map.get(n.id, {}).get("metadata") or {},
         )
         for n in result.nodes
     ]

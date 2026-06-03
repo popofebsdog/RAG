@@ -33,8 +33,15 @@
       <div
         v-if="selected"
         class="node-detail-panel absolute bottom-4 left-3 right-3 rounded-xl p-3 text-[12px] shadow-sm border"
-        style="background:rgba(253,252,249,0.97);border-color:#E0DBD2"
+        :style="panelStyle"
       >
+        <div
+          class="panel-resize-handle"
+          :title="lang === 'zh' ? '拖拉調整面板高度' : 'Drag to resize panel height'"
+          @pointerdown="startPanelDrag"
+        >
+          <span class="panel-resize-grip" />
+        </div>
         <div class="grid h-full grid-cols-[minmax(0,0.95fr)_minmax(320px,1.15fr)] gap-3">
           <div class="min-w-0 overflow-y-auto pr-1">
             <div class="flex justify-between items-start mb-1.5">
@@ -51,7 +58,27 @@
                 </span>
                 <span class="min-w-0 truncate font-semibold text-[13px]" style="color:#2C2926">{{ displayNodeTitle(selected) }}</span>
               </div>
-              <button class="transition-colors text-[14px]" style="color:#667085" aria-label="Close node detail" @click="selected = null">x</button>
+              <div class="flex items-center gap-1">
+                <button
+                  class="panel-control-btn"
+                  :disabled="!canExpandPanel"
+                  :title="lang === 'zh' ? '放大面板' : 'Expand panel'"
+                  :aria-label="lang === 'zh' ? '放大面板' : 'Expand panel'"
+                  @click="expandPanel"
+                >
+                  ▲
+                </button>
+                <button
+                  class="panel-control-btn"
+                  :disabled="!canShrinkPanel"
+                  :title="lang === 'zh' ? '縮小面板' : 'Shrink panel'"
+                  :aria-label="lang === 'zh' ? '縮小面板' : 'Shrink panel'"
+                  @click="shrinkPanel"
+                >
+                  ▼
+                </button>
+                <button class="panel-control-btn text-[14px]" style="color:#667085" aria-label="Close node detail" @click="selected = null">x</button>
+              </div>
             </div>
             <div class="flex gap-3 mb-2 flex-wrap" style="color:#667085">
               <span v-if="selected.page > 0">p{{ selected.page }}</span>
@@ -82,11 +109,26 @@
           <div class="pdf-preview overflow-hidden rounded-lg border bg-white" style="border-color:#D7DEE8">
             <div class="flex items-center justify-between border-b px-3 py-2" style="border-color:#D7DEE8">
               <span class="truncate text-[12px] font-medium" style="color:#41546F">
-                {{ selected.source_doc || (lang === 'zh' ? '無原文檔案' : 'No source document') }}
+                {{ selectedImageTitle }}
               </span>
               <span v-if="selected.page > 0" class="shrink-0 text-[11px]" style="color:#667085">p{{ selected.page }}</span>
             </div>
-            <div v-if="selectedPdfAvailable" class="relative h-full min-h-[260px] overflow-auto bg-[#E9E5DC] p-2">
+            <div v-if="selectedImageUrl" class="relative h-full min-h-[260px] overflow-auto bg-[#E9E5DC] p-2">
+              <div v-if="pdfPreviewLoading" class="absolute inset-0 z-10 flex items-center justify-center bg-white/70 text-[12px]" style="color:#667085">
+                {{ lang === 'zh' ? '載入 DSM 結果影像中…' : 'Loading DSM result image…' }}
+              </div>
+              <div v-if="pdfPreviewError" class="absolute inset-0 z-10 flex items-center justify-center px-4 text-center text-[12px] bg-white" style="color:#B91C1C">
+                {{ pdfPreviewError }}
+              </div>
+              <img
+                :src="selectedImageUrl"
+                class="pdf-page-canvas mx-auto block bg-white shadow-sm"
+                :alt="displayNodeTitle(selected)"
+                @load="pdfPreviewLoading = false"
+                @error="onPreviewImageError"
+              />
+            </div>
+            <div v-else-if="selectedPdfAvailable" class="relative h-full min-h-[260px] overflow-auto bg-[#E9E5DC] p-2">
               <div v-if="pdfPreviewLoading" class="absolute inset-0 z-10 flex items-center justify-center bg-white/70 text-[12px]" style="color:#667085">
                 {{ lang === 'zh' ? '載入原文頁面中…' : 'Loading source page…' }}
               </div>
@@ -132,11 +174,40 @@ const cyContainer = ref<HTMLElement | null>(null)
 const selected = ref<GraphAnalysisNode | null>(null)
 const pdfPreviewLoading = ref(false)
 const pdfPreviewError = ref('')
+const panelHeightVh = ref(56)
+const panelMinHeightVh = 30
+const panelMaxHeightVh = 82
+let dragStartY = 0
+let dragStartHeightVh = 56
+let panelDragging = false
 let cy: cytoscape.Core | null = null
+
+const panelStyle = computed(() => ({
+  background: 'rgba(253,252,249,0.97)',
+  borderColor: '#E0DBD2',
+  height: `${panelHeightVh.value.toFixed(1)}vh`,
+  minHeight: '200px',
+  maxHeight: `${panelMaxHeightVh}vh`,
+}))
+
+const canExpandPanel = computed(() => panelHeightVh.value < panelMaxHeightVh - 0.1)
+const canShrinkPanel = computed(() => panelHeightVh.value > panelMinHeightVh + 0.1)
 
 const selectedPdfAvailable = computed(() => {
   const node = selected.value
   return Boolean(node?.source_doc && node.page && node.page > 0)
+})
+
+const selectedImageUrl = computed(() => {
+  const node = selected.value
+  if (node?.node_type !== 'external_vision') return ''
+  const imageUrl = node.metadata?.source_image_url
+  return typeof imageUrl === 'string' ? imageUrl : ''
+})
+
+const selectedImageTitle = computed(() => {
+  if (selectedImageUrl.value) return props.lang === 'zh' ? 'DSM 結果影像' : 'DSM result image'
+  return selected.value?.source_doc || (props.lang === 'zh' ? '無原文檔案' : 'No source document')
 })
 
 const shouldHighlightRetrieved = computed(() =>
@@ -166,6 +237,15 @@ watch(() => props.data, async (data) => {
   renderGraph(data)
 })
 
+watch(selected, (node, prev) => {
+  if (!node) {
+    panelHeightVh.value = 56
+    stopPanelDrag()
+    return
+  }
+  if (!prev) panelHeightVh.value = 56
+})
+
 watch(selectedPdfTarget, async () => {
   pdfPreviewError.value = ''
   pdfPreviewLoading.value = selectedPdfAvailable.value
@@ -184,6 +264,7 @@ watch(() => props.active, async (active) => {
 })
 
 onUnmounted(() => {
+  stopPanelDrag()
   cy?.destroy()
 })
 
@@ -231,9 +312,38 @@ function refitGraph() {
 
 function onPreviewImageError() {
   pdfPreviewLoading.value = false
-  pdfPreviewError.value = props.lang === 'zh'
-    ? '無法載入這一頁 PDF 原文'
-    : 'Could not load this PDF page'
+  pdfPreviewError.value = selectedImageUrl.value
+    ? (props.lang === 'zh' ? '無法載入 DSM 結果影像' : 'Could not load this DSM result image')
+    : (props.lang === 'zh' ? '無法載入這一頁 PDF 原文' : 'Could not load this PDF page')
+}
+
+function expandPanel() {
+  panelHeightVh.value = Math.min(panelMaxHeightVh, panelHeightVh.value + 10)
+}
+
+function shrinkPanel() {
+  panelHeightVh.value = Math.max(panelMinHeightVh, panelHeightVh.value - 10)
+}
+
+function startPanelDrag(event: PointerEvent) {
+  panelDragging = true
+  dragStartY = event.clientY
+  dragStartHeightVh = panelHeightVh.value
+  window.addEventListener('pointermove', onPanelDrag)
+  window.addEventListener('pointerup', stopPanelDrag)
+}
+
+function onPanelDrag(event: PointerEvent) {
+  if (!panelDragging) return
+  const deltaVh = ((dragStartY - event.clientY) / window.innerHeight) * 100
+  const nextHeight = dragStartHeightVh + deltaVh
+  panelHeightVh.value = Math.max(panelMinHeightVh, Math.min(panelMaxHeightVh, nextHeight))
+}
+
+function stopPanelDrag() {
+  panelDragging = false
+  window.removeEventListener('pointermove', onPanelDrag)
+  window.removeEventListener('pointerup', stopPanelDrag)
 }
 
 function edgeKey(a: string, b: string): string {
@@ -433,6 +543,7 @@ function renderGraph(data: GraphAnalysisResponse) {
         community: node.community,
         text: node.text,
         keywords: node.keywords,
+        metadata: node.metadata ?? {},
       },
     })
   }
@@ -729,6 +840,7 @@ function renderGraph(data: GraphAnalysisResponse) {
       text: d.text,
       is_retrieved: d.isRetrieved,
       is_manual: d.isManual ?? false,
+      metadata: d.metadata ?? {},
     }
   })
 
@@ -782,5 +894,51 @@ function renderGraph(data: GraphAnalysisResponse) {
 .pdf-page-canvas {
   max-width: 100%;
   height: auto !important;
+}
+
+.node-detail-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 200px;
+  touch-action: none;
+}
+
+.panel-resize-handle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 14px;
+  margin: -4px 0 6px;
+  cursor: ns-resize;
+  user-select: none;
+}
+
+.panel-resize-grip {
+  width: 52px;
+  height: 4px;
+  border-radius: 999px;
+  background: #d7dee8;
+}
+
+.panel-control-btn {
+  min-width: 22px;
+  height: 22px;
+  border: 1px solid #d7dee8;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #667085;
+  font-size: 10px;
+  line-height: 1;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.panel-control-btn:hover:not(:disabled) {
+  background: #f1f6fb;
+  color: #41546f;
+}
+
+.panel-control-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 </style>

@@ -164,17 +164,8 @@ const externalPreview = ref<ExternalVisionPreviewResponse | null>(null)
 const externalPreviewLoading = ref(false)
 let previewSeq = 0
 
-const fallbackLocations: ProjectOption[] = [
-  { value: '台2線70.1K 平浪橋南側', label: '台2線70.1K 平浪橋南側' },
-  { value: '龍門', label: '龍門' },
-]
-const fallbackDates: ProjectOption[] = [
-  { value: '2024-06-03', label: '2024-06-03 崩塌發生' },
-  { value: '2024-06-06', label: '2024-06-06 報告日期' },
-]
-
-const locationOptions = computed(() => props.filterOptions?.locations?.length ? props.filterOptions.locations : fallbackLocations)
-const dateOptions = computed(() => props.filterOptions?.dates?.length ? props.filterOptions.dates : fallbackDates)
+const locationOptions = computed<ProjectOption[]>(() => props.filterOptions?.locations ?? [])
+const dateOptions = computed<ProjectOption[]>(() => props.filterOptions?.dates ?? [])
 const externalPreviewMessage = computed(() => {
   if (externalPreviewLoading.value) return lang.value === 'zh' ? '正在讀取 DSM API 狀態。' : 'Reading DSM API status.'
   if (!externalPreview.value) return lang.value === 'zh' ? '建立專案後會嘗試匯入外部辨識 JSON 作為知識節點。' : 'External JSON will be imported as knowledge nodes after project creation.'

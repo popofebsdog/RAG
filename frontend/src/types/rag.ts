@@ -258,6 +258,7 @@ export interface GraphAnalysisNode {
   text: string
   is_retrieved: boolean
   is_manual: boolean
+  metadata?: Record<string, unknown>
 }
 
 export interface GraphAnalysisEdge {
