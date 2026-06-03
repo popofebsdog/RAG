@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "vite --port 5173 --host",
     "build": "node node_modules/vue-tsc/bin/vue-tsc.js && vite build",
     "preview": "vite preview"
   },

@@ -300,8 +300,11 @@ const anomalyItems = computed(() => (props.queryResult?.anomalies ?? []).map(nor
 const selectedDsmImageUrl = computed(() => {
   const node = selected.value
   if (!node || node.node_type !== 'external_vision') return ''
-  const imageUrl = node.metadata?.source_image_url
-  return typeof imageUrl === 'string' ? imageUrl : ''
+  const imageUrl = node.metadata?.dsm_result_image_path
+    || node.metadata?.source_image_path
+    || node.metadata?.dsm_result_image_url
+    || node.metadata?.source_image_url
+  return normalizeDsmImageUrl(imageUrl)
 })
 const selectedDsmSourceUrl = computed(() => {
   const node = selected.value
@@ -417,6 +420,21 @@ function displayNodeType(node: GraphAnalysisNode): string {
   if (node.node_type === 'relation') return props.lang === 'zh' ? '節點關係' : 'Node relation'
   if (node.node_type === 'external_vision') return props.lang === 'zh' ? 'DSM辨識' : 'DSM vision'
   return props.lang === 'zh' ? '知識節點' : 'Knowledge node'
+}
+
+function normalizeDsmImageUrl(rawUrl: unknown): string {
+  if (typeof rawUrl !== 'string') return ''
+  const value = rawUrl.trim()
+  if (!value) return ''
+
+  const apiPathMatch = value.match(/\/api\/dsm-images\/results\/[^?#]+/)
+  if (apiPathMatch) return apiPathMatch[0]
+
+  const dsmPathMatch = value.match(/\/dsm-images\/results\/[^?#]+/)
+  if (dsmPathMatch) return `/api${dsmPathMatch[0]}`
+
+  if (value.startsWith('/dsm-images/')) return `/api${value}`
+  return value
 }
 
 function queryNodeLabel(): string {
