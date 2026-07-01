@@ -162,7 +162,7 @@
                 <span v-for="tag in selected.hazard_tags" :key="tag" class="hazard-chip">{{ tag }}</span>
               </div>
               <div v-if="selectedDsmSourceUrl" class="text-[12px] break-all mb-2" style="color:#667085">
-                {{ lang === 'zh' ? 'DSM 來源：' : 'DSM source: ' }}{{ selectedDsmSourceUrl }}
+                {{ lang === 'zh' ? '正射影像來源：' : 'DSM source: ' }}{{ selectedDsmSourceUrl }}
               </div>
               <p class="leading-relaxed" style="color:#6B6660">{{ cleanDisplayText(selected.text) }}</p>
               <div class="grid grid-cols-2 gap-2 mt-3">
@@ -317,7 +317,7 @@ const selectedPdfAvailable = computed(() => {
   return Boolean(node?.source_doc && node.page && node.page > 0)
 })
 const selectedImageTitle = computed(() => {
-  if (selectedDsmImageUrl.value) return props.lang === 'zh' ? 'DSM 結果影像' : 'DSM result image'
+  if (selectedDsmImageUrl.value) return props.lang === 'zh' ? '正射影像結果' : 'DSM result image'
   return selected.value?.source_doc || (props.lang === 'zh' ? '無原文檔案' : 'No source document')
 })
 const hasOutOfDomainAnomaly = computed(() =>
@@ -418,7 +418,7 @@ function nodeTitle(id: string) {
 
 function displayNodeType(node: GraphAnalysisNode): string {
   if (node.node_type === 'relation') return props.lang === 'zh' ? '節點關係' : 'Node relation'
-  if (node.node_type === 'external_vision') return props.lang === 'zh' ? 'DSM辨識' : 'DSM vision'
+  if (node.node_type === 'external_vision') return props.lang === 'zh' ? '正射影像辨識' : 'DSM vision'
   return props.lang === 'zh' ? '知識節點' : 'Knowledge node'
 }
 

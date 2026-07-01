@@ -115,7 +115,7 @@
             </div>
             <div v-if="selectedImageUrl" class="relative h-full min-h-[260px] overflow-auto bg-[#E9E5DC] p-2">
               <div v-if="pdfPreviewLoading" class="absolute inset-0 z-10 flex items-center justify-center bg-white/70 text-[12px]" style="color:#667085">
-                {{ lang === 'zh' ? '載入 DSM 結果影像中…' : 'Loading DSM result image…' }}
+                {{ lang === 'zh' ? '載入正射影像結果中…' : 'Loading DSM result image…' }}
               </div>
               <div v-if="pdfPreviewError" class="absolute inset-0 z-10 flex items-center justify-center px-4 text-center text-[12px] bg-white" style="color:#B91C1C">
                 {{ pdfPreviewError }}
@@ -209,7 +209,7 @@ const selectedImageUrl = computed(() => {
 })
 
 const selectedImageTitle = computed(() => {
-  if (selectedImageUrl.value) return props.lang === 'zh' ? 'DSM 結果影像' : 'DSM result image'
+  if (selectedImageUrl.value) return props.lang === 'zh' ? '正射影像結果' : 'DSM result image'
   return selected.value?.source_doc || (props.lang === 'zh' ? '無原文檔案' : 'No source document')
 })
 
@@ -292,7 +292,7 @@ function displayNodeTitle(node: GraphAnalysisNode): string {
 
 function displayNodeType(node: GraphAnalysisNode): string {
   if (node.node_type === 'relation') return langText(props.lang, '節點關係', 'Node relation')
-  if (node.node_type === 'external_vision') return langText(props.lang, 'DSM辨識', 'DSM vision')
+  if (node.node_type === 'external_vision') return langText(props.lang, '正射影像辨識', 'DSM vision')
   if (node.node_type === 'query') return langText(props.lang, '查詢', 'Query')
   if (node.node_type === 'query-warning') return langText(props.lang, '主題外問題', 'Out of domain')
   return langText(props.lang, '知識節點', 'Knowledge node')
@@ -331,7 +331,7 @@ function refitGraph() {
 function onPreviewImageError() {
   pdfPreviewLoading.value = false
   pdfPreviewError.value = selectedImageUrl.value
-    ? (props.lang === 'zh' ? '無法載入 DSM 結果影像' : 'Could not load this DSM result image')
+    ? (props.lang === 'zh' ? '無法載入正射影像結果' : 'Could not load this DSM result image')
     : (props.lang === 'zh' ? '無法載入這一頁 PDF 原文' : 'Could not load this PDF page')
 }
 

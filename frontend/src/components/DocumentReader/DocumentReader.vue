@@ -118,7 +118,7 @@
                 style="background:rgba(236,254,255,0.92);border-color:#A5F3FC;color:#0E7490"
               >
                 <span class="inline-block h-2 w-2 rounded-full bg-cyan-500" />
-                <span>{{ lang === 'zh' ? 'DSM 辨識影像，可直接拖曳框選。' : 'DSM recognition image. Drag to create a selection.' }}</span>
+                <span>{{ lang === 'zh' ? '正射影像辨識影像，可直接拖曳框選。' : 'DSM recognition image. Drag to create a selection.' }}</span>
               </div>
 
               <div class="pdfViewer mx-auto flex w-fit flex-col gap-5">
@@ -334,7 +334,7 @@ const canSubmitSelection = computed(() =>
 const readerHintText = computed(() => {
   if (selectedDsmImageUrl.value) {
     return lang.value === 'zh'
-      ? 'DSM 辨識影像畫面；可直接拖曳框選，VLM 讀圖後可確認建立知識節點。'
+      ? '正射影像辨識畫面；可直接拖曳框選，VLM 讀圖後可確認建立知識節點。'
       : 'DSM result image view. Drag to select an area, then review the VLM result before creating a knowledge node.'
   }
   return lang.value === 'zh'
@@ -566,7 +566,7 @@ async function analyzeCroppedSelection(rect: SelectionRect) {
     selectionImage.value = cropCanvas.toDataURL('image/png')
   } catch {
     selectionError.value = props.lang === 'zh'
-      ? '無法讀取框選影像，請確認 DSM 圖片來源可由目前系統存取。'
+      ? '無法讀取框選影像，請確認正射影像來源可由目前系統存取。'
       : 'Could not capture the selected area. Ensure the DSM image is accessible from this app.'
     selectionModalOpen.value = true
     selectionAnalyzing.value = false
@@ -648,7 +648,7 @@ async function goToChunkSource(chunk: ManualChunkInfo) {
   const dsmImageUrl = chunkExternalVisionImageUrl(chunk)
   if (dsmImageUrl) {
     focusedChunkId.value = chunk.chunk_id
-    await selectExternalVisionDoc(chunk.source_doc || (props.lang === 'zh' ? 'DSM 影像辨識資料' : 'DSM vision data'), dsmImageUrl)
+    await selectExternalVisionDoc(chunk.source_doc || (props.lang === 'zh' ? '正射影像辨識資料' : 'DSM vision data'), dsmImageUrl)
     return
   }
   focusedChunkId.value = chunk.chunk_id

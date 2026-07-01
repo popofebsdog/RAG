@@ -100,7 +100,7 @@
         >
           <div class="flex items-center justify-between gap-2">
             <span class="text-[11px] font-semibold">
-              {{ lang === 'zh' ? 'DSM 影像辨識資料' : 'DSM vision data' }}
+              {{ lang === 'zh' ? '正射影像辨識資料' : 'DSM vision data' }}
             </span>
             <span v-if="externalPreviewLoading" class="text-[10px]" style="color:#667085">
               {{ lang === 'zh' ? '檢查中…' : 'Checking…' }}
@@ -167,11 +167,11 @@ let previewSeq = 0
 const locationOptions = computed<ProjectOption[]>(() => props.filterOptions?.locations ?? [])
 const dateOptions = computed<ProjectOption[]>(() => props.filterOptions?.dates ?? [])
 const externalPreviewMessage = computed(() => {
-  if (externalPreviewLoading.value) return lang.value === 'zh' ? '正在讀取 DSM API 狀態。' : 'Reading DSM API status.'
+  if (externalPreviewLoading.value) return lang.value === 'zh' ? '正在讀取正射影像 API 狀態。' : 'Reading DSM API status.'
   if (!externalPreview.value) return lang.value === 'zh' ? '建立專案後會嘗試匯入外部辨識 JSON 作為知識節點。' : 'External JSON will be imported as knowledge nodes after project creation.'
   return externalPreview.value.message || (externalPreview.value.available
     ? (lang.value === 'zh' ? '建立專案後會匯入這些外部知識節點。' : 'These external knowledge nodes will be imported after project creation.')
-    : (lang.value === 'zh' ? '目前沒有可匯入的 DSM JSON。' : 'No DSM JSON is available yet.'))
+    : (lang.value === 'zh' ? '目前沒有可匯入的正射影像 JSON。' : 'No DSM JSON is available yet.'))
 })
 
 watch(showCreate, async (v) => {
@@ -193,7 +193,7 @@ watch([newRegion, newDate], async ([region, date]) => {
     if (seq === previewSeq) {
       externalPreview.value = {
         available: false,
-        message: lang.value === 'zh' ? 'DSM API 尚未連線或沒有對應資料。' : 'DSM API is unavailable or has no matching data.',
+        message: lang.value === 'zh' ? '正射影像 API 尚未連線或沒有對應資料。' : 'DSM API is unavailable or has no matching data.',
         records: [],
       }
     }

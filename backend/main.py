@@ -1044,9 +1044,9 @@ def _format_detection_text(
     bbox = detection.get("bbox") or detection.get("box") or detection.get("bounds")
     area = detection.get("area") or detection.get("areaM2") or detection.get("area_m2")
     centroid = detection.get("centroid") or detection.get("center")
-    label = f"DSM影像辨識_{class_name}_{index}"
+    label = f"正射影像辨識_{class_name}_{index}"
     text_parts = [
-        "DSM 影像辨識外部資料。",
+        "正射影像辨識外部資料。",
         f"地點：{location or '未指定'}。",
         f"日期：{date or '未指定'}。",
         f"辨識類別：{class_name}。",
@@ -1069,7 +1069,7 @@ def _external_vision_records(location: str | None, date: str | None) -> tuple[li
     ref = _external_dsm_reference(location, date)
     path = ref.get("resolved_json_path")
     if not path:
-        return [], ref, None, "尚未在地點或日期選項 metadata 設定 DSM 結果 JSON 路徑"
+        return [], ref, None, "尚未在地點或日期選項 metadata 設定正射影像結果 JSON 路徑"
 
     data, source_url = _fetch_external_json(str(path))
     response = data.get("response") if isinstance(data, dict) else data
@@ -1099,9 +1099,9 @@ def _external_vision_records(location: str | None, date: str | None) -> tuple[li
     if not records and summary:
         records.append(ExternalVisionNodePreview(
             id="dsm:summary",
-            label="DSM影像辨識_摘要",
+            label="正射影像辨識_摘要",
             text="\n".join([
-                "DSM 影像辨識外部資料摘要。",
+                "正射影像辨識外部資料摘要。",
                 f"地點：{location or '未指定'}。",
                 f"日期：{date or '未指定'}。",
                 f"摘要：{json.dumps(summary, ensure_ascii=False)}。",
@@ -1117,9 +1117,9 @@ def _import_external_vision_nodes(project_id: str, location: str | None, date: s
     try:
         records, ref, source_url, message = _external_vision_records(location, date)
     except Exception as exc:
-        return {"imported": 0, "available": False, "message": f"DSM API 無法連線或解析失敗：{exc}"}
+        return {"imported": 0, "available": False, "message": f"正射影像 API 無法連線或解析失敗：{exc}"}
     if not records:
-        return {"imported": 0, "available": False, "message": message or "沒有可匯入的 DSM 影像辨識資料"}
+        return {"imported": 0, "available": False, "message": message or "沒有可匯入的正射影像辨識資料"}
 
     store = get_store()
     meta = DocMeta(region=location, year=year, perspective=perspective, project_id=project_id)
@@ -1134,7 +1134,7 @@ def _import_external_vision_nodes(project_id: str, location: str | None, date: s
             source_page=0,
             start_char=0,
             end_char=len(record.text),
-            source_doc="DSM 影像辨識資料",
+            source_doc="正射影像辨識資料",
             source_anchor=None,
         )
         store.upsert_external_vision(
@@ -1239,14 +1239,14 @@ def external_dsm_preview(location: str | None = None, date: str | None = None):
         records, _ref, source_url, message = _external_vision_records(location, date)
         return ExternalVisionPreviewResponse(
             available=bool(records),
-            message=message or (f"已讀取 {len(records)} 筆 DSM 影像辨識資料" if records else "沒有可匯入的 DSM 影像辨識資料"),
+            message=message or (f"已讀取 {len(records)} 筆正射影像辨識資料" if records else "沒有可匯入的正射影像辨識資料"),
             source_url=source_url,
             records=records,
         )
     except Exception as exc:
         return ExternalVisionPreviewResponse(
             available=False,
-            message=f"DSM API 無法連線或解析失敗：{exc}",
+            message=f"正射影像 API 無法連線或解析失敗：{exc}",
             source_url=None,
             records=[],
         )
