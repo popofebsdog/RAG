@@ -65,11 +65,9 @@ printf "ALTER ROLE visual_rag WITH PASSWORD '%s';\n" "$POSTGRES_PASSWORD" \
 cd backend
 if [ ! -d .venv ]; then
   python3 -m venv .venv
-  source .venv/bin/activate
-  pip install -r requirements.txt
-else
-  source .venv/bin/activate
 fi
+source .venv/bin/activate
+python -m pip install -r requirements.txt
 
 echo "Visual RAG is available on the intranet at http://<server-ip>:$APP_PORT"
 exec uvicorn main:app --host 0.0.0.0 --port "$APP_PORT"
