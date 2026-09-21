@@ -50,7 +50,36 @@ flowchart LR
 
 ## Quick Start
 
-### 1. Start storage services
+### 1. Prerequisites
+
+Install Docker, Python 3, Node.js/npm, and Ollama 0.34.2 or newer. Gemma 4 cannot run on the older Ollama 0.22.0 release.
+
+Clone the branch currently provided for vendor testing:
+
+```bash
+git clone --branch feat/intranet-gemma4-deployment --single-branch https://github.com/popofebsdog/RAG.git
+cd RAG
+```
+
+Download the local models and verify that Ollama is running:
+
+```bash
+ollama pull gemma4:12b-it-q4_K_M
+ollama pull nomic-embed-text
+ollama list
+```
+
+### 2. One-command startup (recommended)
+
+```bash
+./start.sh
+```
+
+The script generates the database password and environment files, starts PostgreSQL and Qdrant, installs backend dependencies, builds the frontend, and serves the complete system from `0.0.0.0:${APP_PORT:-8000}`.
+
+Open `http://<server-ip>:8000`, or `http://127.0.0.1:8000` for local-only testing.
+
+### 3. Start storage services manually
 
 ```bash
 docker compose up -d postgres qdrant
@@ -61,15 +90,7 @@ Default local ports:
 - PostgreSQL: `localhost:55432`
 - Qdrant: `localhost:6333`
 
-### 2. Configure local environment
-
-The one-command startup creates the database secret, builds the frontend, and serves the UI and API from one intranet port. Authentication is disabled by default for trusted intranet testing. First install the required local models:
-
-```bash
-ollama pull gemma4:12b-it-q4_K_M
-ollama pull nomic-embed-text
-./start.sh
-```
+### 4. Configure local environment
 
 For manual startup, copy `.env.example` and `backend/.env.example` to their corresponding `.env` files. Set `APP_PORT` in the root `.env` to the single port that operations will allow from the intranet.
 
@@ -82,6 +103,10 @@ QDRANT_URL=http://localhost:6333
 OLLAMA_URL=http://localhost:11434
 EMBED_MODEL=nomic-embed-text
 OLLAMA_MODEL=gemma4:12b-it-q4_K_M
+OLLAMA_TIMEOUT=600
+VLM_CONCURRENCY=1
+VLM_TIMEOUT=600
+VLM_PAGE_TILES=0
 ```
 
 For maintainer handoff, keep `DATABASE_URL` and `QDRANT_URL` enabled. Do not set `QDRANT_PATH` in production unless you intentionally want local file-mode vector storage.
@@ -125,8 +150,8 @@ curl http://localhost:11434/api/tags
 |---|---|---|
 | `VLM_MAX_PAGES` | Maximum PDF pages parsed by VLM | `20` |
 | `VLM_RENDER_DPI` | PDF page render resolution before VLM parsing | `160` |
-| `VLM_CONCURRENCY` | Number of pages processed in parallel | `4` |
-| `VLM_TIMEOUT` | VLM request timeout in seconds | `120` to `180` |
+| `VLM_CONCURRENCY` | Number of pages processed in parallel | `1` for conservative deployment |
+| `VLM_TIMEOUT` | VLM request timeout in seconds | `600` |
 | `VLM_CACHE` | Reuse VLM page parsing cache | `1` |
 | `CHUNK_MODE` | Knowledge-node preprocessing mode | `semantic` |
 | `TOP_K` | Retrieval evidence count | `5` |
@@ -268,15 +293,29 @@ QDRANT_PATH=./qdrant_data
 
 `QDRANT_PATH` is only for local file-mode testing. In vendor handoff, keep it commented out and use `QDRANT_URL` so vectors are stored in the Qdrant service.
 
-### 3. Start backend
+### 5. Development mode
+
+Start PostgreSQL, Qdrant, and Ollama first, then use two terminals.
+
+Backend:
 
 ```bash
 cd backend
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 uvicorn main:app --reload --host 127.0.0.1 --port 8000
 ```
+
+Frontend:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Open `http://127.0.0.1:5173`. Vite proxies `/api` to `http://127.0.0.1:8000`.
 
 App and API: `http://<server-ip>:8000` and `http://<server-ip>:8000/api`
 
@@ -289,6 +328,18 @@ Only `APP_PORT` (default `8000`) should be opened to the intranet. Keep ports `5
 ```
 
 The script creates the database secret, starts PostgreSQL and Qdrant, builds the frontend, and serves the complete application from `0.0.0.0:${APP_PORT:-8000}`. It stops with the exact `ollama pull` command when a required local model is missing.
+
+### Inspect configuration and service status
+
+```bash
+cat .env
+grep -E '^(DATABASE_URL|QDRANT_URL|OLLAMA_URL|OLLAMA_MODEL|EMBED_MODEL|VLM_)' backend/.env
+docker compose ps
+ollama list
+curl http://127.0.0.1:8000/api/health
+curl http://127.0.0.1:6333/collections
+curl http://127.0.0.1:11434/api/tags
+```
 
 ## How To Use
 

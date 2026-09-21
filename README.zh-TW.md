@@ -73,7 +73,36 @@ curl -OJ "http://127.0.0.1:8000/api/training/export?project_id=<project_id>&data
 
 ## 快速開始
 
-### 1. 啟動儲存服務
+### 1. 安裝前準備
+
+請先安裝 Docker、Python 3、Node.js/npm，以及 Ollama 0.34.2 或更新版本。Gemma 4 無法在舊版 Ollama 0.22.0 上使用。
+
+取得目前提供廠商測試的分支：
+
+```bash
+git clone --branch feat/intranet-gemma4-deployment --single-branch https://github.com/popofebsdog/RAG.git
+cd RAG
+```
+
+下載本機模型，並確認 Ollama 服務已啟動：
+
+```bash
+ollama pull gemma4:12b-it-q4_K_M
+ollama pull nomic-embed-text
+ollama list
+```
+
+### 2. 一鍵啟動（建議）
+
+```bash
+./start.sh
+```
+
+腳本會自動產生資料庫密碼、建立環境設定、啟動 PostgreSQL 與 Qdrant、安裝後端套件、編譯前端，並從 `0.0.0.0:${APP_PORT:-8000}` 提供完整系統。
+
+啟動後開啟 `http://<主機 IP>:8000`。若只在本機測試，使用 `http://127.0.0.1:8000`。
+
+### 3. 手動啟動儲存服務
 
 ```bash
 docker compose up -d postgres qdrant
@@ -84,15 +113,7 @@ docker compose up -d postgres qdrant
 - PostgreSQL: localhost:55432
 - Qdrant: localhost:6333
 
-### 2. 設定本機環境
-
-一鍵啟動腳本會自動產生資料庫密碼、編譯前端，並由單一內網 port 同時提供網頁與 API。目前信任內網測試模式預設不啟用帳密。先安裝兩個本機模型：
-
-```bash
-ollama pull gemma4:12b-it-q4_K_M
-ollama pull nomic-embed-text
-./start.sh
-```
+### 4. 設定本機環境
 
 若手動啟動，請將根目錄與 `backend` 內的 `.env.example` 複製為 `.env`。在根目錄 `.env` 設定 `APP_PORT`，機房防火牆只需對內網開放這一個 port。
 
@@ -105,6 +126,10 @@ QDRANT_URL=http://localhost:6333
 OLLAMA_URL=http://localhost:11434
 EMBED_MODEL=nomic-embed-text
 OLLAMA_MODEL=gemma4:12b-it-q4_K_M
+OLLAMA_TIMEOUT=600
+VLM_CONCURRENCY=1
+VLM_TIMEOUT=600
+VLM_PAGE_TILES=0
 ```
 
 交接給維運人員時，請保留 DATABASE_URL 與 QDRANT_URL。除非你刻意要用本機檔案模式向量儲存，否則不要在正式環境設定 QDRANT_PATH。
@@ -148,8 +173,8 @@ curl http://localhost:11434/api/tags
 |---|---|---|
 | VLM_MAX_PAGES | VLM 可解析的最大 PDF 頁數 | 20 |
 | VLM_RENDER_DPI | 送給 VLM 前的 PDF 渲染解析度 | 160 |
-| VLM_CONCURRENCY | 同時平行處理頁數 | 4 |
-| VLM_TIMEOUT | VLM 請求逾時秒數 | 120 到 180 |
+| VLM_CONCURRENCY | 同時平行處理頁數 | 保守部署使用 1 |
+| VLM_TIMEOUT | VLM 請求逾時秒數 | 600 |
 | VLM_CACHE | 是否重用 VLM 頁面快取 | 1 |
 | CHUNK_MODE | 知識節點前處理模式 | semantic |
 | TOP_K | 檢索證據數量 | 5 |
@@ -289,15 +314,29 @@ QDRANT_PATH=./qdrant_data
 
 QDRANT_PATH 僅適用於本機檔案模式測試。交付廠商時請保持註解狀態，改用 QDRANT_URL 讓向量存入 Qdrant 服務。
 
-### 3. 啟動後端
+### 5. 開發模式
+
+先啟動 PostgreSQL、Qdrant 與 Ollama，再分別開啟兩個終端機。
+
+後端：
 
 ```bash
 cd backend
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 uvicorn main:app --reload --host 127.0.0.1 --port 8000
 ```
+
+前端：
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+開發頁面為 `http://127.0.0.1:5173`，Vite 會將 `/api` 代理到 `http://127.0.0.1:8000`。
 
 應用程式與 API：`http://<機房主機-IP>:8000`、`http://<機房主機-IP>:8000/api`
 
@@ -310,6 +349,18 @@ uvicorn main:app --reload --host 127.0.0.1 --port 8000
 ```
 
 此腳本會產生資料庫密碼、啟動 PostgreSQL 與 Qdrant、編譯前端，再從 `0.0.0.0:${APP_PORT:-8000}` 提供完整系統。若缺少本機模型，會停止並顯示對應的 `ollama pull` 指令。
+
+### 查看設定與服務狀態
+
+```bash
+cat .env
+grep -E '^(DATABASE_URL|QDRANT_URL|OLLAMA_URL|OLLAMA_MODEL|EMBED_MODEL|VLM_)' backend/.env
+docker compose ps
+ollama list
+curl http://127.0.0.1:8000/api/health
+curl http://127.0.0.1:6333/collections
+curl http://127.0.0.1:11434/api/tags
+```
 
 ## 使用方式
 
