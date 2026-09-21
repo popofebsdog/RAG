@@ -532,10 +532,10 @@ class QdrantStore:
 # ── Image collection ──────────────────────────────────────────────────────────
 
 class ImageStore:
-    """Separate Qdrant collection for CLIP image embeddings (512-dim)."""
+    """Separate Qdrant collection for local text embeddings of image descriptions."""
 
-    COLLECTION = "visual_rag_images"
-    DIM = 512  # CLIP ViT-B/32
+    COLLECTION = "visual_rag_images_local_v2"
+    DIM = 768  # nomic-embed-text
 
     def __init__(self, url: str = "http://localhost:6333", path: str = ""):
         self._url = url

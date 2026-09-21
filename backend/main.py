@@ -1,20 +1,26 @@
 from __future__ import annotations
 
 import os
+import hashlib
+import hmac
 import json
 import re
+import secrets
 import tempfile
 import time
 from typing import Annotated
+from uuid import uuid4
 
 import httpx
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, Form, HTTPException, Response, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-load_dotenv(override=True)
+load_dotenv(override=False)
+os.umask(0o077)
 
 from rag.chunking import Chunk, chunk_pages
 from rag.embedding import embed_chunks, embed_query
@@ -25,8 +31,9 @@ from rag.image_store import clear as clear_images, get_images, remove_doc as rem
 from rag.knowledge_extraction import ExtractedKnowledgeGraph, ExtractedNode, ExtractedRelation, extract_knowledge_graph
 from rag.keyword_extract import extract_keywords
 from rag.llm import generate_answer
-from rag.loader import PyMuPDFLoader, get_loader
+from rag.loader import PageContent, PyMuPDFLoader, get_loader
 from rag.markdown_store import (
+    AnchorRecord,
     anchor_pages,
     clear as clear_markdown,
     first_anchor,
@@ -49,6 +56,7 @@ from rag.relations_store import (
 )
 from rag.retrieval import retrieve
 from rag.source_store import clear as clear_sources, get_pdf_path, remove_doc as remove_source, store_pdf
+from rag.training_data import build_relation_review_sample, build_review_sample, export_sft_jsonl
 from rag.umap_analysis import compute_umap
 
 app = FastAPI(title="Visual RAG API")
@@ -57,10 +65,92 @@ PENDING_INGEST_DIR = os.path.join(os.path.dirname(__file__), "data", "pending_in
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:5174", "http://localhost:5175", "http://localhost:5180", "http://localhost:3000", "http://210.71.208.244:5173/"],
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+def _configured_api_key() -> str:
+    return os.getenv("RAG_API_KEY", "").strip()
+
+
+def _auth_enabled() -> bool:
+    return os.getenv("RAG_AUTH_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _request_credential(request: Request) -> str:
+    authorization = request.headers.get("authorization", "")
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() == "bearer" and token:
+        return token.strip()
+    return request.cookies.get("rag_session", "")
+
+
+def _session_token(api_key: str) -> str:
+    return hmac.new(api_key.encode("utf-8"), b"visual-rag-session", hashlib.sha256).hexdigest()
+
+
+def _is_valid_credential(candidate: str) -> bool:
+    expected = _configured_api_key()
+    if not expected or not candidate:
+        return False
+    return secrets.compare_digest(candidate, expected) or secrets.compare_digest(
+        candidate,
+        _session_token(expected),
+    )
+
+
+@app.middleware("http")
+async def require_single_user_auth(request: Request, call_next):
+    if request.scope["path"] == "/api":
+        request.scope["path"] = "/"
+        request.scope["raw_path"] = b"/"
+    elif request.scope["path"].startswith("/api/"):
+        request.scope["path"] = request.scope["path"][4:]
+        request.scope["raw_path"] = request.scope["path"].encode("utf-8")
+
+    if not _auth_enabled():
+        return await call_next(request)
+    if request.method == "OPTIONS" or request.url.path in {"/health", "/auth/session"}:
+        return await call_next(request)
+
+    if not _configured_api_key():
+        return Response(
+            content=json.dumps({"detail": "RAG_API_KEY is not configured"}),
+            status_code=503,
+            media_type="application/json",
+        )
+    if not _is_valid_credential(_request_credential(request)):
+        return Response(
+            content=json.dumps({"detail": "Invalid or missing credentials"}),
+            status_code=401,
+            media_type="application/json",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return await call_next(request)
+
+
+@app.post("/auth/session", status_code=204)
+def create_auth_session(request: Request):
+    if not _auth_enabled():
+        raise HTTPException(404, "Authentication is disabled")
+    if not _configured_api_key():
+        raise HTTPException(503, "RAG_API_KEY is not configured")
+    if not _is_valid_credential(_request_credential(request)):
+        raise HTTPException(401, "Invalid or missing credentials", headers={"WWW-Authenticate": "Bearer"})
+
+    response = Response(status_code=204)
+    response.set_cookie(
+        "rag_session",
+        _session_token(_configured_api_key()),
+        httponly=True,
+        secure=os.getenv("RAG_COOKIE_SECURE", "0") == "1",
+        samesite="strict",
+        path="/",
+    )
+    return response
 
 
 @app.on_event("startup")
@@ -194,6 +284,9 @@ class IngestCommitRequest(BaseModel):
     year: int | None = None
     date: str | None = None
     perspective: str | None = None
+    reviewer_id: str | None = None
+    review_notes: str | None = None
+    training_eligible: bool = True
 
 
 class RetrievedChunk(BaseModel):
@@ -346,6 +439,9 @@ class RelationRequest(BaseModel):
     label: str
     weight: float = 1.0
     project_id: str = "default"
+    reviewer_id: str | None = None
+    review_notes: str | None = None
+    training_eligible: bool = True
 
 
 class RelationInfo(BaseModel):
@@ -465,6 +561,42 @@ def _remove_doc_graph_artifacts(store: QdrantStore, filename: str, project_id: s
     clear_graphs(project_id)
 
 
+async def _read_pdf_upload(file: UploadFile) -> bytes:
+    if not file.filename or not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(400, "Only PDF files are accepted")
+    if len(file.filename) > int(os.getenv("PDF_MAX_FILENAME_LENGTH", "180")):
+        raise HTTPException(400, "PDF filename is too long")
+
+    max_bytes = int(os.getenv("PDF_MAX_UPLOAD_BYTES", str(50 * 1024 * 1024)))
+    chunks: list[bytes] = []
+    total = 0
+    while chunk := await file.read(1024 * 1024):
+        total += len(chunk)
+        if total > max_bytes:
+            raise HTTPException(413, f"PDF exceeds the {max_bytes}-byte upload limit")
+        chunks.append(chunk)
+
+    contents = b"".join(chunks)
+    if not contents.startswith(b"%PDF-"):
+        raise HTTPException(400, "Invalid PDF signature")
+    return contents
+
+
+def _validate_pdf_page_limit(path: str) -> None:
+    import fitz
+
+    max_pages = int(os.getenv("PDF_MAX_PAGES", "300"))
+    try:
+        document = fitz.open(path)
+    except Exception as exc:
+        raise HTTPException(400, "Invalid or unreadable PDF") from exc
+    try:
+        if document.page_count > max_pages:
+            raise HTTPException(413, f"PDF exceeds the {max_pages}-page limit")
+    finally:
+        document.close()
+
+
 def _extract_pdf_ocr(path: str) -> list[dict]:
     import fitz
     import pytesseract
@@ -543,12 +675,6 @@ def _json_from_text(text: str) -> dict:
 
 
 def _describe_vlm_selection(image_b64: str, source_doc: str, source_page: int) -> tuple[str, str, str]:
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        raise HTTPException(500, "OPENAI_API_KEY is required for VLM selection.")
-
-    import httpx
-
     image_data = image_b64.split(",", 1)[1] if "," in image_b64 else image_b64
     prompt = f"""你正在閱讀災害調查 PDF 中由使用者框選的一小塊影像。
 請只根據影像中看得見的文字、照片、表格、標註與圖面判讀，不要補充外部知識，不要編造。
@@ -564,24 +690,17 @@ def _describe_vlm_selection(image_b64: str, source_doc: str, source_page: int) -
 }}
 
 若框選區域資訊不足，仍然回傳可見內容，但 description 開頭加上「低信心：」。
-"""
+    """
     payload = {
-        "model": os.getenv("OPENAI_VISION_MODEL", "gpt-4.1-mini"),
-        "input": [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "input_text", "text": prompt},
-                    {"type": "input_image", "image_url": f"data:image/png;base64,{image_data}"},
-                ],
-            }
-        ],
-        "max_output_tokens": int(os.getenv("VLM_SELECTION_MAX_TOKENS", "700")),
+        "model": os.getenv("OLLAMA_MODEL", "gemma4:12b-it-q4_K_M"),
+        "stream": False,
+        "messages": [{"role": "user", "content": prompt, "images": [image_data]}],
+        "options": {"temperature": 0},
     }
     try:
+        ollama_url = os.getenv("OLLAMA_URL", "http://localhost:11434").rstrip("/")
         resp = httpx.post(
-            "https://api.openai.com/v1/responses",
-            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            f"{ollama_url}/api/chat",
             json=payload,
             timeout=float(os.getenv("VLM_TIMEOUT", "120")),
         )
@@ -589,7 +708,7 @@ def _describe_vlm_selection(image_b64: str, source_doc: str, source_page: int) -
     except Exception as exc:
         raise HTTPException(500, f"VLM selection failed: {exc}") from exc
 
-    parsed = _json_from_text(_extract_response_text(resp.json()))
+    parsed = _json_from_text(str(resp.json().get("message", {}).get("content") or ""))
     description = str(parsed.get("description") or "").strip()
     label = str(parsed.get("label") or "").strip()
     evidence_type = str(parsed.get("evidence_type") or "selection").strip()
@@ -1167,6 +1286,25 @@ def _pending_ingest_path(project_id: str, preview_id: str) -> str:
     return os.path.join(PENDING_INGEST_DIR, safe_project, f"{safe_preview}.json")
 
 
+def _pending_ingest_source_path(project_id: str, preview_id: str) -> str:
+    return os.path.splitext(_pending_ingest_path(project_id, preview_id))[0] + ".pdf"
+
+
+def _save_pending_ingest_source(project_id: str, preview_id: str, contents: bytes) -> None:
+    path = _pending_ingest_source_path(project_id, preview_id)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "wb") as f:
+        f.write(contents)
+
+
+def _load_pending_ingest_source(project_id: str, preview_id: str) -> bytes | None:
+    path = _pending_ingest_source_path(project_id, preview_id)
+    if not os.path.exists(path):
+        return None
+    with open(path, "rb") as f:
+        return f.read()
+
+
 def _save_pending_ingest(project_id: str, preview_id: str, payload: dict) -> None:
     path = _pending_ingest_path(project_id, preview_id)
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -1183,9 +1321,27 @@ def _load_pending_ingest(project_id: str, preview_id: str) -> dict:
 
 
 def _remove_pending_ingest(project_id: str, preview_id: str) -> None:
-    path = _pending_ingest_path(project_id, preview_id)
-    if os.path.exists(path):
-        os.remove(path)
+    for path in (
+        _pending_ingest_path(project_id, preview_id),
+        _pending_ingest_source_path(project_id, preview_id),
+    ):
+        if os.path.exists(path):
+            os.remove(path)
+
+
+def _save_training_review_from_commit(pending: dict, req: IngestCommitRequest) -> dict:
+    if req.training_eligible and not (req.reviewer_id or "").strip():
+        raise HTTPException(422, "reviewer_id is required when training_eligible is true")
+    sample = build_review_sample(
+        pending,
+        [node.model_dump() for node in req.nodes],
+        [relation.model_dump() for relation in req.relations],
+        reviewer_id=req.reviewer_id,
+        review_notes=req.review_notes,
+        training_eligible=req.training_eligible,
+    )
+    postgres_store.save_training_review_sample(sample)
+    return sample
 
 
 def _build_ingest_candidates(graph: ExtractedKnowledgeGraph, filename: str) -> tuple[list[CandidateNode], list[CandidateRelation]]:
@@ -1231,6 +1387,38 @@ def _build_ingest_candidates(graph: ExtractedKnowledgeGraph, filename: str) -> t
 def project_filter_options():
     """Dropdown source for project metadata, preferred from DSM API with static fallback."""
     return _combined_project_filter_options()
+
+
+@app.get("/training/reviews")
+def training_reviews(
+    project_id: str = "default",
+    dataset_split: str | None = None,
+    eligible_only: bool = False,
+):
+    if dataset_split and dataset_split not in {"train", "validation", "test"}:
+        raise HTTPException(400, "dataset_split must be train, validation, or test")
+    return postgres_store.list_training_review_samples(
+        project_id,
+        dataset_split=dataset_split,
+        eligible_only=eligible_only,
+    )
+
+
+@app.get("/training/export")
+def export_training_reviews(project_id: str = "default", dataset_split: str | None = None):
+    if dataset_split and dataset_split not in {"train", "validation", "test"}:
+        raise HTTPException(400, "dataset_split must be train, validation, or test")
+    samples = postgres_store.list_training_review_samples(
+        project_id,
+        dataset_split=dataset_split,
+        eligible_only=True,
+    )
+    content = export_sft_jsonl(samples)
+    split_suffix = f"-{dataset_split}" if dataset_split else ""
+    headers = {
+        "Content-Disposition": f'attachment; filename="{project_id}{split_suffix}-sft.jsonl"',
+    }
+    return Response(content=content, media_type="application/x-ndjson", headers=headers)
 
 
 @app.get("/external/dsm/preview", response_model=ExternalVisionPreviewResponse)
@@ -1325,15 +1513,13 @@ async def ingest_preview(
     date: str = Form(""),
     perspective: str = Form(""),
 ):
-    if not file.filename or not file.filename.lower().endswith(".pdf"):
-        raise HTTPException(400, "Only PDF files are accepted")
-
-    contents = await file.read()
+    contents = await _read_pdf_upload(file)
     with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
         tmp.write(contents)
         tmp_path = tmp.name
 
     try:
+        _validate_pdf_page_limit(tmp_path)
         os.environ["PDF_LOADER"] = loader_type
         os.environ["CHUNK_MODE"] = chunk_mode
         loader = get_loader()
@@ -1345,22 +1531,35 @@ async def ingest_preview(
             raise HTTPException(422, "Could not extract text from PDF")
         pages, clean_markdown, anchor_records = anchor_pages(pages)
 
-        # Keep raw source available during review; graph/vector writes happen only on commit.
-        store_pdf(file.filename, contents, project_id=project_id)
-        store_pages(file.filename, pages, project_id=project_id)
-        store_markdown(file.filename, clean_markdown, anchor_records, project_id=project_id)
-        try:
-            img_loader = PyMuPDFLoader()
-            page_images = img_loader.load_images(tmp_path)
-            store_images(file.filename, page_images, project_id=project_id)
-        except Exception:
-            pass
+        store = get_store()
+        was_existing = (
+            file.filename in set(store.docs(project_id=project_id))
+            or file.filename in set(list_page_docs(project_id=project_id))
+            or file.filename in {
+                row.get("filename") for row in postgres_store.list_documents(project_id)
+            }
+        )
 
         extracted_graph = extract_knowledge_graph(pages, file.filename)
         nodes, relations = _build_ingest_candidates(extracted_graph, file.filename)
         preview_id = f"preview_{int(time.time() * 1000)}"
+        _save_pending_ingest_source(project_id, preview_id, contents)
         _save_pending_ingest(project_id, preview_id, {
+            "preview_id": preview_id,
+            "project_id": project_id,
             "filename": file.filename,
+            "was_existing": was_existing,
+            "source_sha256": hashlib.sha256(contents).hexdigest(),
+            "model_name": os.getenv(
+                "GEMMA_MODEL",
+                os.getenv("OLLAMA_MODEL", "gemma4:12b-it-q4_K_M"),
+            ),
+            "prompt_version": os.getenv("KNOWLEDGE_EXTRACTION_PROMPT_VERSION", "knowledge-extraction-v1"),
+            "nodes": [node.model_dump() for node in nodes],
+            "relations": [relation.model_dump() for relation in relations],
+            "pages": [page.__dict__ for page in pages],
+            "clean_markdown": clean_markdown,
+            "anchors": [anchor.__dict__ for anchor in anchor_records],
             "total_pages": len(pages),
             "mode": mode,
             "loader_type": loader_type,
@@ -1381,6 +1580,20 @@ async def ingest_preview(
         )
     finally:
         os.unlink(tmp_path)
+
+
+@app.delete("/ingest/preview/{preview_id}")
+def discard_ingest_preview(preview_id: str, project_id: str = "default"):
+    pending = _load_pending_ingest(project_id, preview_id)
+    filename = pending.get("filename")
+    if filename and not pending.get("was_existing", False):
+        remove_pages(filename, project_id=project_id)
+        remove_markdown(filename, project_id=project_id)
+        remove_source(filename, project_id=project_id)
+        remove_ocr(filename, project_id=project_id)
+        remove_images(filename, project_id=project_id)
+    _remove_pending_ingest(project_id, preview_id)
+    return {"status": "discarded", "preview_id": preview_id}
 
 
 @app.post("/ingest/commit", response_model=IngestResponse)
@@ -1411,6 +1624,26 @@ def ingest_commit(req: IngestCommitRequest):
     elif filename in store.docs(project_id=req.project_id):
         _remove_doc_graph_artifacts(store, filename, req.project_id)
         remove_ocr(filename, project_id=req.project_id)
+
+    source_contents = _load_pending_ingest_source(req.project_id, req.preview_id)
+    if source_contents is not None:
+        store_pdf(filename, source_contents, project_id=req.project_id)
+        staged_pages = [PageContent(**page) for page in pending.get("pages", [])]
+        staged_anchors = [AnchorRecord(**anchor) for anchor in pending.get("anchors", [])]
+        store_pages(filename, staged_pages, project_id=req.project_id)
+        store_markdown(
+            filename,
+            pending.get("clean_markdown", ""),
+            staged_anchors,
+            project_id=req.project_id,
+        )
+        try:
+            page_images = PyMuPDFLoader().load_images(
+                _pending_ingest_source_path(req.project_id, req.preview_id)
+            )
+            store_images(filename, page_images, project_id=req.project_id)
+        except Exception:
+            pass
 
     approved_nodes = [node for node in req.nodes if node.approved and node.text.strip()]
     auto_chunks: list[Chunk] = []
@@ -1494,6 +1727,7 @@ def ingest_commit(req: IngestCommitRequest):
         },
     )
 
+    _save_training_review_from_commit(pending, req)
     _remove_pending_ingest(req.project_id, req.preview_id)
     chunk_infos = [
         ChunkInfo(
@@ -1528,15 +1762,13 @@ async def ingest(
     date: str = Form(""),
     perspective: str = Form(""),
 ):
-    if not file.filename or not file.filename.lower().endswith(".pdf"):
-        raise HTTPException(400, "Only PDF files are accepted")
-
-    contents = await file.read()
+    contents = await _read_pdf_upload(file)
     with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
         tmp.write(contents)
         tmp_path = tmp.name
 
     try:
+        _validate_pdf_page_limit(tmp_path)
         os.environ["PDF_LOADER"] = loader_type
         os.environ["CHUNK_MODE"] = chunk_mode
         loader = get_loader()
@@ -1677,7 +1909,15 @@ def project_clear(project_id: str = "default"):
             store.remove_relation(relation_id)
         except Exception:
             pass
+    postgres_store.clear_project(project_id)
     return {"status": "cleared"}
+
+
+@app.delete("/projects/{project_id}")
+def project_delete(project_id: str):
+    project_clear(project_id)
+    postgres_store.delete_project(project_id)
+    return {"status": "deleted", "project_id": project_id}
 
 
 @app.delete("/project/files/{filename}")
@@ -1689,6 +1929,7 @@ def project_remove_file(filename: str, project_id: str = "default"):
         raise HTTPException(404, f"'{filename}' not found in project")
     _remove_doc_graph_artifacts(store, filename, project_id)
     remove_pages(filename, project_id=project_id)
+    postgres_store.remove_document(project_id, filename)
     return {"status": "removed", "filename": filename}
 
 
@@ -1846,17 +2087,20 @@ class ImageChunkInfo(BaseModel):
 
 @app.post("/chunks/image", response_model=ImageChunkInfo)
 def create_image_chunk(req: ImageChunkRequest):
-    from rag.clip_embedding import embed_image_b64
-
     if not req.label.strip():
         raise HTTPException(400, "label cannot be empty")
 
     chunk_id = f"image:{_slugify(req.label)}:{int(time.time())}"
 
     try:
-        embedding = embed_image_b64(req.data_b64)
+        _, description, _ = _describe_vlm_selection(
+            req.data_b64,
+            req.source_doc,
+            req.source_page,
+        )
+        embedding = embed_query(f"{req.label}\n{description}")
     except Exception as e:
-        raise HTTPException(500, f"CLIP embedding failed: {e}")
+        raise HTTPException(500, f"Local image embedding failed: {e}")
 
     get_image_store().upsert_image(
         chunk_id=chunk_id,
@@ -1909,7 +2153,7 @@ def create_manual_chunk(req: ManualChunkRequest):
     if not req.label.strip():
         raise HTTPException(400, "label cannot be empty")
 
-    chunk_id = f"manual:{_slugify(req.label)}:{int(time.time())}"
+    chunk_id = f"manual:{_slugify(req.label)}:{uuid4().hex[:12]}"
     chunk = Chunk(
         chunk_id=chunk_id,
         text=req.text,
@@ -1979,8 +2223,43 @@ def delete_manual_chunk(chunk_id: str, project_id: str = "default"):
 
 # ── Chunk relations ───────────────────────────────────────────────────────────
 
+def _validate_relation_review(reviewer_id: str | None, training_eligible: bool) -> None:
+    if training_eligible and not (reviewer_id or "").strip():
+        raise HTTPException(422, "reviewer_id is required when training_eligible is true")
+
+
+def _save_relation_training_event(
+    action: str,
+    before: dict | None,
+    after: dict | None,
+    review: object | None = None,
+    *,
+    project_id: str | None = None,
+    reviewer_id: str | None = None,
+    review_notes: str | None = None,
+    training_eligible: bool | None = None,
+) -> dict:
+    resolved_project_id = project_id or getattr(review, "project_id", None) or (after or before or {}).get("project_id") or "default"
+    resolved_reviewer = reviewer_id if reviewer_id is not None else getattr(review, "reviewer_id", None)
+    resolved_notes = review_notes if review_notes is not None else getattr(review, "review_notes", None)
+    resolved_eligible = training_eligible if training_eligible is not None else getattr(review, "training_eligible", True)
+    _validate_relation_review(resolved_reviewer, resolved_eligible)
+    sample = build_relation_review_sample(
+        action,
+        before,
+        after,
+        project_id=resolved_project_id,
+        reviewer_id=resolved_reviewer,
+        review_notes=resolved_notes,
+        training_eligible=resolved_eligible,
+        model_name=os.getenv("GEMMA_MODEL", os.getenv("OLLAMA_MODEL", "gemma4:12b-it-q4_K_M")),
+    )
+    postgres_store.save_training_review_sample(sample)
+    return sample
+
 @app.post("/chunks/relations", response_model=RelationInfo)
 def create_relation(req: RelationRequest):
+    _validate_relation_review(req.reviewer_id, req.training_eligible)
     label = req.label.strip()
     if not label:
         raise HTTPException(400, "label cannot be empty")
@@ -2007,6 +2286,7 @@ def create_relation(req: RelationRequest):
         project_id=req.project_id,
     )
     _upsert_relation_vector(relation)
+    _save_relation_training_event("create", None, relation, req)
     return RelationInfo(**relation)
 
 
@@ -2017,10 +2297,17 @@ def get_relations(project_id: str = "default"):
 
 class RelationWeightUpdate(BaseModel):
     weight: float
+    reviewer_id: str | None = None
+    review_notes: str | None = None
+    training_eligible: bool = True
 
 
 @app.patch("/chunks/relations/{relation_id}/weight", response_model=RelationInfo)
 def update_relation_weight_endpoint(relation_id: str, body: RelationWeightUpdate, project_id: str = "default"):
+    _validate_relation_review(body.reviewer_id, body.training_eligible)
+    before = next((item for item in list_relations(project_id) if item["id"] == relation_id), None)
+    if not before:
+        raise HTTPException(404, f"Relation '{relation_id}' not found")
     ok = update_relation_weight(relation_id, body.weight, project_id)
     if not ok:
         raise HTTPException(404, f"Relation '{relation_id}' not found")
@@ -2029,15 +2316,36 @@ def update_relation_weight_endpoint(relation_id: str, body: RelationWeightUpdate
     r = next((x for x in relations if x["id"] == relation_id), None)
     if not r:
         raise HTTPException(404)
+    _save_relation_training_event("update", before, r, body, project_id=project_id)
     return RelationInfo(**r)
 
 
 @app.delete("/chunks/relations/{relation_id}")
-def remove_relation_endpoint(relation_id: str, project_id: str = "default"):
+def remove_relation_endpoint(
+    relation_id: str,
+    project_id: str = "default",
+    reviewer_id: str | None = None,
+    review_notes: str | None = None,
+    training_eligible: bool = True,
+):
+    _validate_relation_review(reviewer_id, training_eligible)
+    before = next((item for item in list_relations(project_id) if item["id"] == relation_id), None)
+    if not before:
+        raise HTTPException(404, f"Relation '{relation_id}' not found")
     ok = delete_relation(relation_id, project_id)
     if not ok:
         raise HTTPException(404, f"Relation '{relation_id}' not found")
     get_store().remove_relation(relation_id)
+    _save_relation_training_event(
+        "delete",
+        before,
+        None,
+        None,
+        project_id=project_id,
+        reviewer_id=reviewer_id,
+        review_notes=review_notes,
+        training_eligible=training_eligible,
+    )
     return {"status": "removed", "id": relation_id}
 
 
@@ -2096,9 +2404,6 @@ def query(req: QueryRequest):
             )
         )
 
-    answer = generate_answer(req.question, results, relations=enriched_relations)
-
-    graph = _build_graph(req.question, answer, retrieved, store, project_id=req.project_id)
     anomalies: list[AnomalyFlag] = []
     retrieved_payload = [chunk.model_dump() for chunk in retrieved]
     out_of_domain = detect_out_of_domain(
@@ -2126,6 +2431,20 @@ def query(req: QueryRequest):
     contradiction = detect_relation_contradiction(req.question, enriched_relations)
     if contradiction:
         anomalies.append(AnomalyFlag(type=contradiction.type, message=contradiction.message, details=contradiction.details))
+
+    if any(flag.type == "out_of_domain" for flag in anomalies):
+        answer = "此問題與目前知識庫主題不相符，無法根據現有文件提供可靠回答。"
+    else:
+        try:
+            answer = generate_answer(req.question, results, relations=enriched_relations)
+        except Exception as exc:
+            print(f"[query] LLM answer generation failed: {exc}", flush=True)
+            raise HTTPException(
+                502,
+                "LLM answer generation failed. Check the configured provider, model, and service availability.",
+            ) from exc
+
+    graph = _build_graph(req.question, answer, retrieved, store, project_id=req.project_id)
 
     response = QueryResponse(
         question=req.question,
@@ -2330,6 +2649,7 @@ def _build_graph(
     project_id: str = "default",
 ) -> GraphData:
     doc_names = store.docs(project_id=project_id)
+    llm_label = f"Ollama · {os.getenv('OLLAMA_MODEL', 'gemma4:12b-it-q4_K_M')}"
 
     nodes: list[GraphNode] = []
     edges: list[GraphEdge] = []
@@ -2346,7 +2666,7 @@ def _build_graph(
             type="query",
             active=True,
         ),
-        GraphNode(id="llm", label="Claude LLM", type="llm", active=True),
+        GraphNode(id="llm", label=llm_label, type="llm", active=True),
         GraphNode(id="answer", label="Answer", type="answer", active=True, data={"text": answer}),
     ]
     edges += [
@@ -2419,3 +2739,8 @@ def _upsert_relation_vector(relation: dict) -> None:
         weight=float(relation.get("weight", 1.0)),
         project_id=relation["project_id"],
     )
+
+
+FRONTEND_DIST = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "frontend", "dist"))
+if os.path.isdir(FRONTEND_DIST):
+    app.mount("/", StaticFiles(directory=FRONTEND_DIST, html=True), name="frontend")

@@ -11,10 +11,6 @@ from .loader import PageContent
 from .standardization import normalize_label, normalize_relation_label, normalize_text, standardize_relation_weight
 
 
-LLM_PROVIDER = os.getenv("LLM_PROVIDER", "ollama")
-OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2")
-OLLAMA_TIMEOUT = float(os.getenv("OLLAMA_TIMEOUT", "120"))
 KG_EXTRACTION_TIMEOUT = float(os.getenv("KG_EXTRACTION_TIMEOUT", "18"))
 KG_EXTRACTION_USE_LLM = os.getenv("KG_EXTRACTION_USE_LLM", "1") != "0"
 
@@ -298,28 +294,19 @@ JSON 格式：
 
 
 def _chat(system: str, user: str) -> str:
-    if LLM_PROVIDER == "anthropic":
-        import anthropic
-        client = anthropic.Anthropic()
-        message = client.messages.create(
-            model=os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-5"),
-            max_tokens=2048,
-            system=system,
-            messages=[{"role": "user", "content": user}],
-        )
-        return message.content[0].text
-
+    ollama_url = os.getenv("OLLAMA_URL", "http://localhost:11434").rstrip("/")
+    ollama_model = os.getenv("OLLAMA_MODEL", "gemma4:12b-it-q4_K_M")
     resp = httpx.post(
-        f"{OLLAMA_URL}/api/chat",
+        f"{ollama_url}/api/chat",
         json={
-            "model": OLLAMA_MODEL,
+            "model": ollama_model,
             "stream": False,
             "messages": [
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
             ],
         },
-        timeout=min(OLLAMA_TIMEOUT, KG_EXTRACTION_TIMEOUT),
+        timeout=min(float(os.getenv("OLLAMA_TIMEOUT", "120")), KG_EXTRACTION_TIMEOUT),
     )
     resp.raise_for_status()
     return resp.json()["message"]["content"]

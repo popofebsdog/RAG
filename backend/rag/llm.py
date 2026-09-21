@@ -6,13 +6,9 @@ import httpx
 
 from .retrieval import RetrievalResult
 
-# ── Config ────────────────────────────────────────────────────────────────────
-LLM_PROVIDER   = os.getenv("LLM_PROVIDER",   "ollama")
-OLLAMA_URL     = os.getenv("OLLAMA_URL",     "http://localhost:11434")
-OLLAMA_MODEL   = os.getenv("OLLAMA_MODEL",   "llama3.2")
-OLLAMA_TIMEOUT = float(os.getenv("OLLAMA_TIMEOUT", "120"))
-OPENAI_MODEL   = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
-OPENAI_TIMEOUT = float(os.getenv("OPENAI_TIMEOUT", "120"))
+
+DEFAULT_OLLAMA_URL = "http://localhost:11434"
+DEFAULT_OLLAMA_MODEL = "gemma4:12b-it-q4_K_M"
 
 SYSTEM_PROMPT = (
     "你是一個精準的文件助理。"
@@ -22,129 +18,70 @@ SYSTEM_PROMPT = (
 )
 
 
-# ── Ollama ────────────────────────────────────────────────────────────────────
-
 def _ollama_chat(system: str, user: str) -> str:
-    resp = httpx.post(
-        f"{OLLAMA_URL}/api/chat",
+    ollama_url = os.getenv("OLLAMA_URL", DEFAULT_OLLAMA_URL).rstrip("/")
+    ollama_model = os.getenv("OLLAMA_MODEL", DEFAULT_OLLAMA_MODEL)
+    response = httpx.post(
+        f"{ollama_url}/api/chat",
         json={
-            "model": OLLAMA_MODEL,
+            "model": ollama_model,
             "stream": False,
             "messages": [
                 {"role": "system", "content": system},
-                {"role": "user",   "content": user},
-            ],
-        },
-        timeout=OLLAMA_TIMEOUT,
-    )
-    resp.raise_for_status()
-    return resp.json()["message"]["content"]
-
-
-# ── Anthropic fallback ────────────────────────────────────────────────────────
-
-def _anthropic_chat(system: str, user: str) -> str:
-    import anthropic
-    client = anthropic.Anthropic()
-    message = client.messages.create(
-        model="claude-sonnet-4-5",
-        max_tokens=1024,
-        system=system,
-        messages=[{"role": "user", "content": user}],
-    )
-    return message.content[0].text
-
-
-# ── OpenAI ────────────────────────────────────────────────────────────────────
-
-def _extract_openai_text(data: dict) -> str:
-    if isinstance(data.get("output_text"), str):
-        return data["output_text"].strip()
-    parts: list[str] = []
-    for item in data.get("output") or []:
-        for content in item.get("content") or []:
-            text = content.get("text")
-            if isinstance(text, str):
-                parts.append(text)
-    return "\n".join(parts).strip()
-
-
-def _openai_chat(system: str, user: str) -> str:
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        raise RuntimeError("OPENAI_API_KEY is required when LLM_PROVIDER=openai")
-    resp = httpx.post(
-        "https://api.openai.com/v1/responses",
-        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-        json={
-            "model": OPENAI_MODEL,
-            "input": [
-                {"role": "system", "content": system},
                 {"role": "user", "content": user},
             ],
-            "max_output_tokens": 1024,
         },
-        timeout=OPENAI_TIMEOUT,
+        timeout=float(os.getenv("OLLAMA_TIMEOUT", "120")),
     )
-    resp.raise_for_status()
-    text = _extract_openai_text(resp.json())
-    return text or "模型未回傳文字內容。"
+    response.raise_for_status()
+    return response.json()["message"]["content"]
 
-
-# ── Public API ────────────────────────────────────────────────────────────────
 
 def generate_answer(
     query: str,
     results: list[RetrievalResult],
     relations: list[dict] | None = None,
 ) -> str:
-    """Generate an answer from retrieved chunks.
-
-    relations: optional list of dicts with keys from_text, to_text, label,
-               from_chunk_id, to_chunk_id — injected as causal context so
-               the LLM can reason about curated graph relationships.
-    """
-    # ── Chunk context ──────────────────────────────────────────────────────────
+    """Generate an answer from local retrieval context with Ollama."""
     context_parts: list[str] = []
-    for r in results:
-        if r.is_boosted:
-            # Knowledge node: show label as concept name, text as supporting evidence
-            label = r.chunk.chunk_id.split(":")[1] if r.chunk.chunk_id.startswith("manual:") else r.chunk.chunk_id
+    for result in results:
+        if result.is_boosted:
+            label = (
+                result.chunk.chunk_id.split(":")[1]
+                if result.chunk.chunk_id.startswith("manual:")
+                else result.chunk.chunk_id
+            )
             context_parts.append(
                 f"[概念節點：{label}（知識圖譜）]\n"
-                f"佐證內容：{r.chunk.text[:400]}"
+                f"佐證內容：{result.chunk.text[:400]}"
             )
         else:
             context_parts.append(
-                f"[段落 {r.chunk.chunk_id} | 頁 {r.chunk.source_page}]\n"
-                f"{r.chunk.text}"
+                f"[段落 {result.chunk.chunk_id} | 頁 {result.chunk.source_page}]\n"
+                f"{result.chunk.text}"
             )
     context = "\n\n---\n\n".join(context_parts)
 
-    # ── Relations context (supervised attention knowledge) ─────────────────────
-    retrieved_ids = {r.chunk.chunk_id for r in results}
+    retrieved_ids = {result.chunk.chunk_id for result in results}
     relation_lines: list[str] = []
-    for rel in (relations or []):
-        if rel.get("from_chunk_id") in retrieved_ids or rel.get("to_chunk_id") in retrieved_ids:
-            # Prefer label names over raw text for readability
-            from_name = rel.get("from_label") or (rel.get("from_text") or rel.get("from_chunk_id", "?"))[:40]
-            to_name   = rel.get("to_label")   or (rel.get("to_text")   or rel.get("to_chunk_id",   "?"))[:40]
-            edge_label = rel.get("label", "→")
-            relation_lines.append(f"  「{from_name}」 --[{edge_label}]--> 「{to_name}」")
+    for relation in relations or []:
+        if (
+            relation.get("from_chunk_id") in retrieved_ids
+            or relation.get("to_chunk_id") in retrieved_ids
+        ):
+            from_name = relation.get("from_label") or (
+                relation.get("from_text") or relation.get("from_chunk_id", "?")
+            )[:40]
+            to_name = relation.get("to_label") or (
+                relation.get("to_text") or relation.get("to_chunk_id", "?")
+            )[:40]
+            relation_lines.append(
+                f"  「{from_name}」 --[{relation.get('label', '→')}]--> 「{to_name}」"
+            )
 
     relation_section = ""
     if relation_lines:
-        relation_section = (
-            "\n\n【已知圖譜關係】\n"
-            + "\n".join(relation_lines)
-            + "\n"
-        )
+        relation_section = "\n\n【已知圖譜關係】\n" + "\n".join(relation_lines) + "\n"
 
-    user_msg = f"上下文：\n{context}{relation_section}\n\n問題：{query}"
-
-    provider = LLM_PROVIDER.lower()
-    if provider == "anthropic":
-        return _anthropic_chat(SYSTEM_PROMPT, user_msg)
-    if provider == "openai":
-        return _openai_chat(SYSTEM_PROMPT, user_msg)
-    return _ollama_chat(SYSTEM_PROMPT, user_msg)
+    user_message = f"上下文：\n{context}{relation_section}\n\n問題：{query}"
+    return _ollama_chat(SYSTEM_PROMPT, user_message)

@@ -57,6 +57,22 @@
               <input v-model.number="relationWeight" class="relation-range flex-1" type="range" min="0" max="1" step="0.05" />
               <span class="w-10 text-right tabular-nums" style="color:#172033">{{ relationWeight.toFixed(2) }}</span>
             </label>
+            <input
+              v-model="relationReviewerId"
+              class="w-full rounded-lg border px-3 py-2 text-[13px] outline-none"
+              style="border-color:#D7DEE8;background:#F8FAFC;color:#172033"
+              :placeholder="lang === 'zh' ? '審核者代號' : 'Reviewer ID'"
+            />
+            <input
+              v-model="relationReviewNotes"
+              class="w-full rounded-lg border px-3 py-2 text-[13px] outline-none"
+              style="border-color:#D7DEE8;background:#F8FAFC;color:#172033"
+              :placeholder="lang === 'zh' ? '關係判讀依據或修改原因' : 'Relation review notes'"
+            />
+            <label class="flex items-center gap-2 text-[12px] font-semibold" style="color:#41546F">
+              <input v-model="relationTrainingEligible" type="checkbox" class="h-4 w-4 accent-[#1E4E8C]" />
+              <span>{{ lang === 'zh' ? '納入訓練資料' : 'Use for training' }}</span>
+            </label>
             <div v-if="duplicateRelation" class="notice-box">
               {{ lang === 'zh' ? '這組起點、終點與節點關係標籤已存在，請調整方向或標籤。' : 'This source, target, and node relation label already exists.' }}
             </div>
@@ -90,7 +106,7 @@
                   <p class="text-[13px] font-semibold truncate" style="color:#172033">{{ rel.label }}</p>
                   <p class="text-[12px] truncate" style="color:#667085">{{ nodeTitle(rel.from_chunk_id) }} → {{ nodeTitle(rel.to_chunk_id) }}</p>
                 </div>
-                <button class="icon-button" :aria-label="lang === 'zh' ? '刪除節點關係' : 'Delete node relation'" @click="removeRelation(rel.id)">x</button>
+                <button class="icon-button" :disabled="!canAuditRelationChange" :aria-label="lang === 'zh' ? '刪除節點關係' : 'Delete node relation'" @click="removeRelation(rel.id)">x</button>
               </div>
               <label class="mt-2 flex items-center gap-2 text-[12px]" style="color:#667085">
                 <span>{{ lang === 'zh' ? '權重' : 'Weight' }}</span>
@@ -100,6 +116,7 @@
                   max="1"
                   step="0.05"
                   :value="rel.weight"
+                  :disabled="!canAuditRelationChange"
                   class="relation-range flex-1"
                   @change="changeRelationWeight(rel.id, Number(($event.target as HTMLInputElement).value))"
                 />
@@ -209,7 +226,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onUnmounted, nextTick, h } from 'vue'
 import cytoscape from 'cytoscape'
-import type { ChunkRelation, GraphAnalysisNode, GraphAnalysisResponse, ManualChunkInfo, QueryResponse } from '../../types/rag'
+import type { ChunkRelation, GraphAnalysisNode, GraphAnalysisResponse, ManualChunkInfo, QueryResponse, RelationReviewMetadata } from '../../types/rag'
 
 const EndpointBox = {
   props: ['label', 'value'],
@@ -233,9 +250,9 @@ const props = defineProps<{
   threshold: number
   active: boolean
   pageImageUrl: (filename: string, pageNum: number) => string
-  createRelation: (fromId: string, toId: string, label: string, weight?: number) => Promise<ChunkRelation>
-  updateRelationWeight: (id: string, weight: number) => Promise<ChunkRelation>
-  deleteRelation: (id: string) => Promise<void>
+  createRelation: (fromId: string, toId: string, label: string, weight?: number, review?: RelationReviewMetadata) => Promise<ChunkRelation>
+  updateRelationWeight: (id: string, weight: number, review?: RelationReviewMetadata) => Promise<ChunkRelation>
+  deleteRelation: (id: string, review?: RelationReviewMetadata) => Promise<void>
 }>()
 
 const emit = defineEmits<{
@@ -249,6 +266,9 @@ const fromId = ref('')
 const toId = ref('')
 const relationLabel = ref('')
 const relationWeight = ref(1)
+const relationReviewerId = ref('')
+const relationReviewNotes = ref('')
+const relationTrainingEligible = ref(true)
 const submitting = ref(false)
 const relationError = ref('')
 const pdfPreviewLoading = ref(false)
@@ -340,8 +360,23 @@ const duplicateRelation = computed(() => {
   ) ?? null
 })
 
+const canAuditRelationChange = computed(() => (
+  !relationTrainingEligible.value || Boolean(relationReviewerId.value.trim())
+))
+const relationReviewMetadata = computed<RelationReviewMetadata>(() => ({
+  reviewer_id: relationReviewerId.value.trim() || undefined,
+  review_notes: relationReviewNotes.value.trim() || undefined,
+  training_eligible: relationTrainingEligible.value,
+}))
 const canCreateRelation = computed(() =>
-  Boolean(fromId.value && toId.value && fromId.value !== toId.value && relationLabel.value.trim() && !duplicateRelation.value),
+  Boolean(
+    fromId.value
+    && toId.value
+    && fromId.value !== toId.value
+    && relationLabel.value.trim()
+    && !duplicateRelation.value
+    && canAuditRelationChange.value
+  ),
 )
 const submitButtonLabel = computed(() => {
   if (submitting.value) return props.lang === 'zh' ? '建立中' : 'Creating'
@@ -653,7 +688,13 @@ async function submitRelation() {
   relationError.value = ''
   submitting.value = true
   try {
-    await props.createRelation(fromId.value, toId.value, relationLabel.value.trim(), relationWeight.value)
+    await props.createRelation(
+      fromId.value,
+      toId.value,
+      relationLabel.value.trim(),
+      relationWeight.value,
+      relationReviewMetadata.value,
+    )
     relationLabel.value = ''
     relationWeight.value = 1
     emit('refresh')
@@ -667,12 +708,12 @@ async function submitRelation() {
 }
 
 async function changeRelationWeight(id: string, weight: number) {
-  await props.updateRelationWeight(id, weight)
+  await props.updateRelationWeight(id, weight, relationReviewMetadata.value)
   emit('refresh')
 }
 
 async function removeRelation(id: string) {
-  await props.deleteRelation(id)
+  await props.deleteRelation(id, relationReviewMetadata.value)
   emit('refresh')
 }
 

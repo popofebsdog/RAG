@@ -278,30 +278,19 @@ def detect_relation_contradiction(
     try:
         import os, httpx as _httpx
 
-        provider = os.getenv("LLM_PROVIDER", "ollama")
-        if provider == "anthropic":
-            import anthropic
-            client = anthropic.Anthropic()
-            response = client.messages.create(
-                model="claude-haiku-4-5",
-                max_tokens=256,
-                messages=[{"role": "user", "content": prompt}],
-            )
-            raw = response.content[0].text.strip()
-        else:
-            ollama_url   = os.getenv("OLLAMA_URL",   "http://localhost:11434")
-            ollama_model = os.getenv("OLLAMA_MODEL",  "llama3.2")
-            resp = _httpx.post(
-                f"{ollama_url}/api/chat",
-                json={
-                    "model": ollama_model,
-                    "stream": False,
-                    "messages": [{"role": "user", "content": prompt}],
-                },
-                timeout=60,
-            )
-            resp.raise_for_status()
-            raw = resp.json()["message"]["content"].strip()
+        ollama_url = os.getenv("OLLAMA_URL", "http://localhost:11434").rstrip("/")
+        ollama_model = os.getenv("OLLAMA_MODEL", "gemma4:12b-it-q4_K_M")
+        resp = _httpx.post(
+            f"{ollama_url}/api/chat",
+            json={
+                "model": ollama_model,
+                "stream": False,
+                "messages": [{"role": "user", "content": prompt}],
+            },
+            timeout=60,
+        )
+        resp.raise_for_status()
+        raw = resp.json()["message"]["content"].strip()
 
         # Strip markdown code fence if model wraps it
         if raw.startswith("```"):

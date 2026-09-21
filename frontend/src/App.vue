@@ -281,12 +281,12 @@ import DocumentReader from './components/DocumentReader/DocumentReader.vue'
 import NodeReviewPanel from './components/NodeReviewPanel/NodeReviewPanel.vue'
 import ProjectPanel from './components/ProjectPanel/ProjectPanel.vue'
 import { useRag } from './composables/useRag'
-import type { DocMetadata, IngestPreviewResponse, ManualChunkRequest, ManualChunkInfo, ChunkRelation } from './types/rag'
+import type { DocMetadata, IngestPreviewResponse, ManualChunkRequest, ManualChunkInfo, ChunkRelation, RelationReviewMetadata } from './types/rag'
 
 const {
   ingesting, querying, loadingUmap, loadingGraphAnalysis,
   ingestResult, ingestPreview, queryResult, umapResult, graphAnalysisResult,
-  projectFiles, manualChunks, error, projectFilterOptions,
+  projectFiles, manualChunks, error, queryError, projectFilterOptions,
   projects, activeProjectId, activeProject,
   createProject, fetchProjectsFromBackend, fetchProjectFilterOptions, fetchExternalVisionPreview, switchProject, deleteProject,
   ingestPdf, commitIngestPreview, discardIngestPreview, removeProjectFile, clearProject,
@@ -303,17 +303,23 @@ const readerTarget = ref<{ sourceDoc: string; page: number; nonce: number } | nu
 const reviewPanelOpen = ref(false)
 const deleteConfirmOpen = ref(false)
 const pendingDeleteFile = ref<string | null>(null)
+const pendingDeleteProjectId = ref<string | null>(null)
 const pendingClearAll = ref(false)
 
 const uploadError = computed(() => (ingesting.value ? null : error.value))
-const queryError  = computed(() => (querying.value  ? null : error.value))
 const totalAutoChunks = computed(() => projectFiles.value.reduce((s, f) => s + f.chunk_count, 0))
 const hasContent = computed(() => totalAutoChunks.value > 0 || manualChunks.value.length > 0)
 const deleteConfirmTitle = computed(() => {
+  if (pendingDeleteProjectId.value) return lang.value === 'zh' ? '刪除這個專案？' : 'Delete this project?'
   if (pendingClearAll.value) return lang.value === 'zh' ? '清除目前專案資料？' : 'Clear this project?'
   return lang.value === 'zh' ? '刪除這份 PDF？' : 'Delete this PDF?'
 })
 const deleteConfirmMessage = computed(() => {
+  if (pendingDeleteProjectId.value) {
+    return lang.value === 'zh'
+      ? '這會永久刪除專案及其 PDF、知識節點、節點關係、向量索引與訓練審核資料。此操作無法復原。'
+      : 'This permanently deletes the project and its PDFs, knowledge nodes, relations, vector indexes, and training reviews. This cannot be undone.'
+  }
   if (pendingClearAll.value) {
     return lang.value === 'zh'
       ? '這會移除目前專案中的 PDF、知識節點、節點關係、向量索引與知識圖譜 JSON。此操作無法復原。'
@@ -344,20 +350,20 @@ async function handleDeleteManualChunk(chunkId: string): Promise<void> {
   fetchProjectFiles()
 }
 
-async function handleCreateRelation(fromId: string, toId: string, label: string, weight = 1): Promise<ChunkRelation> {
-  const result = await createRelation(fromId, toId, label, weight)
+async function handleCreateRelation(fromId: string, toId: string, label: string, weight = 1, review?: RelationReviewMetadata): Promise<ChunkRelation> {
+  const result = await createRelation(fromId, toId, label, weight, review)
   clearVizCache()
   return result
 }
 
-async function handleUpdateRelationWeight(relationId: string, weight: number): Promise<ChunkRelation> {
-  const result = await updateRelationWeight(relationId, weight)
+async function handleUpdateRelationWeight(relationId: string, weight: number, review?: RelationReviewMetadata): Promise<ChunkRelation> {
+  const result = await updateRelationWeight(relationId, weight, review)
   clearVizCache()
   return result
 }
 
-async function handleDeleteRelation(relationId: string): Promise<void> {
-  await deleteRelation(relationId)
+async function handleDeleteRelation(relationId: string, review?: RelationReviewMetadata): Promise<void> {
+  await deleteRelation(relationId, review)
   clearVizCache()
 }
 
@@ -381,7 +387,12 @@ function onSwitchProject(id: string) {
   if (id === activeProjectId.value) return
   switchProject(id)
 }
-function onDeleteProject(id: string) { deleteProject(id) }
+function onDeleteProject(id: string) {
+  pendingDeleteProjectId.value = id
+  pendingDeleteFile.value = null
+  pendingClearAll.value = false
+  deleteConfirmOpen.value = true
+}
 
 function requestRemoveProjectFile(filename: string) {
   pendingDeleteFile.value = filename
@@ -398,13 +409,20 @@ function requestClearProject() {
 function closeDeleteConfirm() {
   deleteConfirmOpen.value = false
   pendingDeleteFile.value = null
+  pendingDeleteProjectId.value = null
   pendingClearAll.value = false
 }
 
 async function confirmDeleteAction() {
   const filename = pendingDeleteFile.value
+  const projectId = pendingDeleteProjectId.value
   const clearAll = pendingClearAll.value
   closeDeleteConfirm()
+  if (projectId) {
+    await deleteProject(projectId)
+    showReader.value = false
+    return
+  }
   if (clearAll) {
     await clearProject()
     showReader.value = false
@@ -429,8 +447,8 @@ async function handleCommitIngestPreview(preview: IngestPreviewResponse) {
   clearVizCache()
 }
 
-function handleDiscardIngestPreview() {
-  discardIngestPreview()
+async function handleDiscardIngestPreview() {
+  await discardIngestPreview()
   reviewPanelOpen.value = false
 }
 

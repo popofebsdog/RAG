@@ -86,6 +86,12 @@ export interface CandidateRelation {
   approved: boolean
 }
 
+export interface RelationReviewMetadata {
+  reviewer_id?: string
+  review_notes?: string
+  training_eligible: boolean
+}
+
 export interface IngestPreviewResponse {
   preview_id: string
   filename: string
@@ -93,6 +99,9 @@ export interface IngestPreviewResponse {
   total_nodes: number
   nodes: CandidateNode[]
   relations: CandidateRelation[]
+  reviewer_id?: string
+  review_notes?: string
+  training_eligible?: boolean
 }
 
 export interface RetrievedChunk {

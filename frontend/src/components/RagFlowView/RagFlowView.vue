@@ -75,7 +75,7 @@ const PIPELINE_STEPS = [
   { id: 'faiss', label: 'FAISS Index', sublabel: 'Vector store', type: 'faiss' },
   { id: 'query', label: 'User Query', sublabel: 'Input question', type: 'query' },
   { id: 'retriever', label: 'Retriever', sublabel: 'Top-K search', type: 'retriever' },
-  { id: 'llm', label: 'Claude LLM', sublabel: 'claude-sonnet-4-6', type: 'llm' },
+  { id: 'llm', label: 'Local Gemma 4', sublabel: 'gemma4:12b-it-q4_K_M', type: 'llm' },
   { id: 'answer', label: 'Answer', sublabel: 'Final response', type: 'answer' },
 ]
 

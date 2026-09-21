@@ -39,8 +39,8 @@ flowchart LR
 | Backend | Python + FastAPI |
 | Frontend | Vue 3 + TypeScript + Vite |
 | PDF rendering | PyMuPDF |
-| VLM parsing | Anthropic Claude Vision or OpenAI Vision-compatible model |
-| LLM answer generation | OpenAI by default, with Anthropic/Ollama fallback |
+| VLM parsing | Local Ollama `gemma4:12b-it-q4_K_M` |
+| LLM answer generation | Local Ollama `gemma4:12b-it-q4_K_M` |
 | Vector DB | Qdrant |
 | Metadata DB | PostgreSQL 16 |
 | Graph analysis | NetworkX |
@@ -61,39 +61,27 @@ Default local ports:
 - PostgreSQL: `localhost:55432`
 - Qdrant: `localhost:6333`
 
-### 2. Configure backend environment
+### 2. Configure local environment
+
+The one-command startup creates the database secret, builds the frontend, and serves the UI and API from one intranet port. Authentication is disabled by default for trusted intranet testing. First install the required local models:
 
 ```bash
-cd backend
-cp .env.example .env
-```
-
-Start Ollama and pull the embedding model:
-
-```bash
+ollama pull gemma4:12b-it-q4_K_M
 ollama pull nomic-embed-text
+./start.sh
 ```
 
-Set at least one VLM/API key:
-
-```bash
-ANTHROPIC_API_KEY=<your-anthropic-key>
-# or
-OPENAI_API_KEY=<your-openai-key>
-```
+For manual startup, copy `.env.example` and `backend/.env.example` to their corresponding `.env` files. Set `APP_PORT` in the root `.env` to the single port that operations will allow from the intranet.
 
 Useful defaults in `backend/.env.example`:
 
 ```bash
-DATABASE_URL=postgresql://visual_rag:visual_rag_password@localhost:55432/visual_rag
+DATABASE_URL=postgresql://visual_rag:<local-password>@localhost:55432/visual_rag
+RAG_AUTH_ENABLED=0
 QDRANT_URL=http://localhost:6333
 OLLAMA_URL=http://localhost:11434
 EMBED_MODEL=nomic-embed-text
-LLM_PROVIDER=openai
-OPENAI_MODEL=gpt-4.1-mini
-VLM_PROVIDER=anthropic
-ANTHROPIC_VISION_MODEL=claude-sonnet-4-5
-OPENAI_VISION_MODEL=gpt-4.1-mini
+OLLAMA_MODEL=gemma4:12b-it-q4_K_M
 ```
 
 For maintainer handoff, keep `DATABASE_URL` and `QDRANT_URL` enabled. Do not set `QDRANT_PATH` in production unless you intentionally want local file-mode vector storage.
@@ -106,15 +94,12 @@ When handing the system to an operations vendor, ask them to create `backend/.en
 
 | Key | What To Fill | Example / Note |
 |---|---|---|
-| `DATABASE_URL` | PostgreSQL connection string | `postgresql://visual_rag:visual_rag_password@localhost:55432/visual_rag` |
+| `DATABASE_URL` | PostgreSQL connection string | Use the password from the root `.env` |
+| `RAG_AUTH_ENABLED` | Enable API-key authentication | `0` for the current trusted-intranet deployment |
 | `QDRANT_URL` | Qdrant server URL | `http://localhost:6333` |
-| `OLLAMA_URL` | Ollama server URL for embeddings | `http://localhost:11434` |
+| `OLLAMA_URL` | Local Ollama server URL | `http://localhost:11434` |
 | `EMBED_MODEL` | Ollama embedding model | `nomic-embed-text` |
-| `LLM_PROVIDER` | Answer-generation provider | Recommended: `openai` |
-| `OPENAI_API_KEY` | OpenAI API key, required when `LLM_PROVIDER=openai` or `VLM_PROVIDER=openai` | Keep secret; do not commit |
-| `OPENAI_MODEL` | Text answer model | `gpt-4.1-mini` |
-| `VLM_PROVIDER` | PDF vision parser provider | Recommended: `openai` if using only OpenAI billing |
-| `OPENAI_VISION_MODEL` | Vision model for PDF page understanding | `gpt-4.1-mini` |
+| `OLLAMA_MODEL` | Local text and vision model | `gemma4:12b-it-q4_K_M` |
 | `DSM_API_BASE_URL` | Vendor DSM API host and port, required for external image-recognition nodes | `http://localhost:3000` |
 | `DSM_API_TIMEOUT` | DSM API timeout in seconds | `8` |
 
@@ -122,13 +107,14 @@ When handing the system to an operations vendor, ask them to create `backend/.en
 
 ```bash
 docker compose up -d postgres qdrant
+ollama pull gemma4:12b-it-q4_K_M
 ollama pull nomic-embed-text
 ```
 
 The vendor should verify:
 
 ```bash
-curl http://127.0.0.1:8000/health
+curl http://127.0.0.1:8000/api/health
 curl http://localhost:6333/collections
 curl http://localhost:11434/api/tags
 ```
@@ -274,20 +260,6 @@ Response shape:
 }
 ```
 
-### Anthropic Alternative
-
-If the vendor wants to use Anthropic instead of OpenAI for answer generation or VLM parsing, fill:
-
-```bash
-LLM_PROVIDER=anthropic
-ANTHROPIC_API_KEY=<vendor-anthropic-key>
-ANTHROPIC_MODEL=claude-sonnet-4-5
-VLM_PROVIDER=anthropic
-ANTHROPIC_VISION_MODEL=claude-sonnet-4-5
-```
-
-Make sure the Anthropic account has active credits. If credits are insufficient, `/query` will fail when `LLM_PROVIDER=anthropic`.
-
 ### Do Not Use In Production
 
 ```bash
@@ -306,17 +278,9 @@ pip install -r requirements.txt
 uvicorn main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-API: `http://127.0.0.1:8000`
+App and API: `http://<server-ip>:8000` and `http://<server-ip>:8000/api`
 
-### 4. Start frontend
-
-```bash
-cd frontend
-npm install
-npm run dev -- --host 127.0.0.1 --port 5173
-```
-
-App: `http://127.0.0.1:5173`
+Only `APP_PORT` (default `8000`) should be opened to the intranet. Keep ports `55432`, `6333`, `6334`, and `11434` host-local.
 
 ### One-command local startup
 
@@ -324,7 +288,7 @@ App: `http://127.0.0.1:5173`
 ./start.sh
 ```
 
-The script starts PostgreSQL, Qdrant, backend, and frontend. If `backend/.env` does not exist, it creates one and asks you to set the API key.
+The script creates the database secret, starts PostgreSQL and Qdrant, builds the frontend, and serves the complete application from `0.0.0.0:${APP_PORT:-8000}`. It stops with the exact `ollama pull` command when a required local model is missing.
 
 ## How To Use
 

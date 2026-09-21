@@ -87,6 +87,7 @@ import type {
   VisualizationTab,
   ManualChunkInfo,
   ChunkRelation,
+  RelationReviewMetadata,
 } from '../../types/rag'
 
 // Inline SVG icon components
@@ -106,9 +107,9 @@ const props = defineProps<{
   lang: 'en' | 'zh'
   pdfUrl: (filename: string) => string
   pageImageUrl: (filename: string, pageNum: number) => string
-  createRelation: (fromId: string, toId: string, label: string, weight?: number) => Promise<ChunkRelation>
-  updateRelationWeight: (id: string, weight: number) => Promise<ChunkRelation>
-  deleteRelation: (id: string) => Promise<void>
+  createRelation: (fromId: string, toId: string, label: string, weight?: number, review?: RelationReviewMetadata) => Promise<ChunkRelation>
+  updateRelationWeight: (id: string, weight: number, review?: RelationReviewMetadata) => Promise<ChunkRelation>
+  deleteRelation: (id: string, review?: RelationReviewMetadata) => Promise<void>
 }>()
 
 const emit = defineEmits<{

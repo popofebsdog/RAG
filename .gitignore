@@ -29,6 +29,7 @@ backend/images_cache/
 
 # Local planning/runtime artifacts
 .Codex/
+.codex_tmp/
 
 # Generated test PDFs can be rebuilt from scripts
 test_artifacts/*.pdf

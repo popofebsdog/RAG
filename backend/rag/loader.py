@@ -10,6 +10,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from typing import Protocol
 
+import httpx
+
 
 @dataclass
 class PageContent:
@@ -239,15 +241,10 @@ def _vlm_cache_dir() -> str:
 
 
 def _vlm_cache_key(image_b64s: list[str], page_num: int) -> str:
-    provider = os.getenv("VLM_PROVIDER", os.getenv("LLM_PROVIDER", "anthropic")).lower()
-    model = (
-        os.getenv("ANTHROPIC_VISION_MODEL", os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-5"))
-        if provider == "anthropic"
-        else os.getenv("OPENAI_VISION_MODEL", "gpt-4.1-mini")
-    )
+    model = os.getenv("OLLAMA_MODEL", "gemma4:12b-it-q4_K_M")
     fingerprint = "|".join([
         _VLM_PROMPT_VERSION,
-        provider,
+        "ollama",
         model,
         str(os.getenv("VLM_RENDER_DPI", "160")),
         str(page_num),
@@ -280,8 +277,8 @@ def _vlm_extract_page_cached(image_b64s: list[str], page_num: int) -> tuple[str,
                     {
                         "page_num": page_num,
                         "prompt_version": _VLM_PROMPT_VERSION,
-                        "provider": os.getenv("VLM_PROVIDER", os.getenv("LLM_PROVIDER", "anthropic")).lower(),
-                        "model": os.getenv("OPENAI_VISION_MODEL") or os.getenv("ANTHROPIC_VISION_MODEL") or "",
+                        "provider": "ollama",
+                        "model": os.getenv("OLLAMA_MODEL", "gemma4:12b-it-q4_K_M"),
                         "created_at": int(time.time()),
                         "text": text,
                     },
@@ -295,19 +292,10 @@ def _vlm_extract_page_cached(image_b64s: list[str], page_num: int) -> tuple[str,
 
 
 def _vlm_extract_page(image_b64s: list[str], page_num: int) -> str:
-    provider = os.getenv("VLM_PROVIDER", os.getenv("LLM_PROVIDER", "anthropic")).lower()
-    if provider == "anthropic":
-        return _anthropic_vision_extract(image_b64s, page_num)
-    if provider == "openai":
-        return _openai_vision_extract(image_b64s, page_num)
-    raise RuntimeError("VLM loader supports VLM_PROVIDER=anthropic or VLM_PROVIDER=openai")
+    return _ollama_vision_extract(image_b64s, page_num)
 
 
-def _anthropic_vision_extract(image_b64s: list[str], page_num: int) -> str:
-    import anthropic
-
-    model = os.getenv("ANTHROPIC_VISION_MODEL", os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-5"))
-    client = anthropic.Anthropic()
+def _ollama_vision_extract(image_b64s: list[str], page_num: int) -> str:
     prompt = f"""你正在讀取一頁災害調查投影片影像。請不要做一般 OCR 逐字轉錄，而是抽取可用於 RAG 與知識圖譜的乾淨資訊。
 
 請只根據影像可見內容輸出繁體中文 Markdown，格式固定如下：
@@ -339,119 +327,24 @@ def _anthropic_vision_extract(image_b64s: list[str], page_num: int) -> str:
 - 優先抽取災害事件、雨量、地質、岩體、裂縫、破壞面、崩落/傾覆機制與災損影響。
 - 如果頁面主要是團隊成員、致謝、聲明或參考連結，只做摘要與關鍵事實，不要輸出「建議節點」與「建議關係」。
 """
-    content = [
-        {
-            "type": "image",
-            "source": {
-                "type": "base64",
-                "media_type": "image/png",
-                "data": image_b64,
+    try:
+        ollama_url = os.getenv("OLLAMA_URL", "http://localhost:11434").rstrip("/")
+        response = httpx.post(
+            f"{ollama_url}/api/chat",
+            json={
+                "model": os.getenv("OLLAMA_MODEL", "gemma4:12b-it-q4_K_M"),
+                "stream": False,
+                "messages": [
+                    {"role": "user", "content": prompt, "images": image_b64s},
+                ],
+                "options": {"temperature": 0},
             },
-        }
-        for image_b64 in image_b64s
-    ]
-    content.append({"type": "text", "text": prompt})
-
-    try:
-        message = client.messages.create(
-            model=model,
-            max_tokens=int(os.getenv("VLM_MAX_TOKENS", "1400")),
-            temperature=0,
-            messages=[
-                {
-                    "role": "user",
-                    "content": content,
-                }
-            ],
-        )
-    except Exception as exc:
-        raise RuntimeError(_summarize_vlm_error(exc, "Anthropic VLM")) from exc
-    text = "\n".join(
-        block.text for block in message.content
-        if getattr(block, "type", "") == "text" and getattr(block, "text", "")
-    )
-    return _clean_vlm_text(text)
-
-
-def _openai_vision_extract(image_b64s: list[str], page_num: int) -> str:
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        raise RuntimeError("OPENAI_API_KEY is required when VLM_PROVIDER=openai")
-
-    import httpx
-
-    model = os.getenv("OPENAI_VISION_MODEL", "gpt-4.1-mini")
-    prompt = f"""你正在讀取一頁災害調查投影片影像。請不要逐字 OCR，而是抽取可用於 RAG 與知識圖譜的乾淨資訊。
-
-輸出繁體中文 Markdown，格式固定：
-## Page {page_num}
-### 頁面摘要
-- ...
-### 關鍵事實
-- ...
-### 圖像證據
-- image: 整頁/左上/右上/左下/右下 | observation: ... | implication: ...
-### 建議節點
-- label: ... | evidence: ...
-### 建議關係
-- from: ... | relation: 導致/促成/形成/提供條件/影響/位於/具有條件/觀測到 | to: ... | evidence: ...
-### 數值與位置
-- ...
-### 不確定或低信心
-- ...
-
-請修正常見 OCR 誤判，例如「月塌」理解為「崩塌」、「張列縫」理解為「張裂縫」、「買通節理」理解為「貫通節理」。
-第一張圖是整頁，後續圖片是同頁放大切片，請交叉比對，不要把切片視為不同頁。
-必須主動閱讀照片、地形圖、剖面圖、立體圖、標註箭頭、圖例與尺寸線；不要只讀標題和文字框。
-圖像證據至少列出 2 條；若頁面沒有圖表/照片，才可寫「無」。
-優先抽取災害事件、雨量、地質、岩體、裂縫、破壞面、崩落/傾覆機制與災損影響。
-如果頁面主要是團隊成員、致謝、聲明或參考連結，只做摘要與關鍵事實，不要輸出「建議節點」與「建議關係」。
-"""
-    content = [{"type": "input_text", "text": prompt}]
-    content.extend(
-        {"type": "input_image", "image_url": f"data:image/png;base64,{image_b64}"}
-        for image_b64 in image_b64s
-    )
-    payload = {
-        "model": model,
-        "input": [
-            {
-                "role": "user",
-                "content": content,
-            }
-        ],
-        "max_output_tokens": int(os.getenv("VLM_MAX_TOKENS", "1400")),
-    }
-    try:
-        resp = httpx.post(
-            "https://api.openai.com/v1/responses",
-            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-            json=payload,
             timeout=float(os.getenv("VLM_TIMEOUT", "120")),
         )
-        resp.raise_for_status()
+        response.raise_for_status()
     except Exception as exc:
-        raise RuntimeError(_summarize_vlm_error(exc, "OpenAI VLM")) from exc
-
-    data = resp.json()
-    text = data.get("output_text")
-    if not text:
-        parts: list[str] = []
-        for item in data.get("output", []):
-            for content in item.get("content", []):
-                if content.get("type") in {"output_text", "text"} and content.get("text"):
-                    parts.append(content["text"])
-        text = "\n".join(parts)
-    return _clean_vlm_text(text or "")
-
-
-def _summarize_vlm_error(exc: Exception, provider_name: str) -> str:
-    text = str(exc)
-    if "credit balance" in text.lower() or "billing" in text.lower():
-        return f"{provider_name} 無法使用：帳戶額度或 billing 不足。請補充額度，或改設 VLM_PROVIDER=openai 並提供 OPENAI_API_KEY。"
-    if "api_key" in text.lower() or "authentication" in text.lower() or "unauthorized" in text.lower():
-        return f"{provider_name} 無法使用：API key 未設定或驗證失敗。"
-    return f"{provider_name} 解析失敗：{text[:240]}"
+        raise RuntimeError(f"Ollama Gemma 4 解析失敗：{str(exc)[:240]}") from exc
+    return _clean_vlm_text(str(response.json().get("message", {}).get("content") or ""))
 
 
 def _clean_vlm_text(text: str) -> str:

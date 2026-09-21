@@ -44,9 +44,8 @@
 
 - Framework：Vue 3
 - Language：TypeScript
-- Build tool：Vite
-- Dev server：http://127.0.0.1:5173
-- API proxy：`/api` 轉發至 `http://localhost:8000`
+- Build tool：Vite，部署時輸出至 `frontend/dist`
+- Intranet entrypoint：FastAPI 由單一 `APP_PORT` 提供靜態前端與 `/api`
 
 主要前端模組：
 
@@ -66,7 +65,7 @@
 
 - Framework：FastAPI
 - Language：Python 3.11
-- API server：http://127.0.0.1:8000
+- Intranet server：`http://<server-ip>:<APP_PORT>`，同時提供前端與 `/api`
 - Main app：`backend/main.py`
 
 主要後端模組：
@@ -145,41 +144,28 @@ chunks + embeddings + relations
 
 ## 5. LLM 與模型設定
 
-### 5.1 目前問答 LLM
+### 5.1 本機文字模型
 
 問答回答目前由 `backend/rag/llm.py` 控制。
 
-目前預設：
+問答、知識抽取與因果異常判定統一使用：
 
 ```env
-LLM_PROVIDER=ollama
-OLLAMA_MODEL=llama3.2
+OLLAMA_MODEL=gemma4:12b-it-q4_K_M
 ```
 
-若 `.env` 未設定 `LLM_PROVIDER`，問答會走本機 Ollama：
+請求只會送到本機 Ollama：
 
 ```text
 http://localhost:11434/api/chat
 ```
 
-若要改為 API，需設定：
+### 5.2 本機 VLM
+
+PDF 頁面理解與使用者框選圖片同樣使用 Gemma 4 的視覺能力：
 
 ```env
-LLM_PROVIDER=anthropic
-ANTHROPIC_API_KEY=...
-ANTHROPIC_MODEL=claude-sonnet-4-5
-```
-
-目前尚未實作 OpenAI text answer provider；OpenAI 目前主要用於 VLM。
-
-### 5.2 目前 VLM
-
-`.env` 目前支援：
-
-```env
-VLM_PROVIDER=openai
-OPENAI_API_KEY=...
-OPENAI_VISION_MODEL=gpt-4.1-mini
+OLLAMA_MODEL=gemma4:12b-it-q4_K_M
 ```
 
 VLM 用於：
@@ -443,7 +429,7 @@ Response：
 
 #### POST `/chunks/image`
 
-用途：建立圖片 chunk，使用 CLIP image embedding。
+用途：建立圖片 chunk。Gemma 4 先產生圖片描述，再以本機 `nomic-embed-text` 建立向量。
 
 Request：
 

@@ -43,10 +43,10 @@
           </p>
         </div>
 
-        <!-- Delete button (hover, not active) -->
+        <!-- Delete button -->
         <button
-          v-if="activeProjectId !== p.id"
           class="shrink-0 opacity-0 group-hover:opacity-100 text-xs transition-all delete-button"
+          :aria-label="lang === 'zh' ? `刪除專案 ${p.name}` : `Delete project ${p.name}`"
           @click.stop="emit('delete', p.id)"
         >✕</button>
       </div>

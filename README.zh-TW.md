@@ -32,6 +32,29 @@ flowchart LR
   I --> K["必要時顯示領域外警示"]
 ```
 
+## 專業審核與訓練資料
+
+知識節點審核提交後，系統會同步保存一份不可變的訓練審核樣本。正式知識節點仍寫入 PostgreSQL 與 Qdrant；訓練樣本則保留模型原始候選、專業人員修正版、拒絕項目、關係權重差異、文件 SHA-256、模型版本、prompt 版本、審核者與備註。
+
+審核畫面可取消勾選「納入訓練資料」。未勾選的紀錄仍保留作為審核軌跡，但不會出現在 SFT 匯出內容中。
+
+訓練資料 API：
+
+```bash
+# 查詢審核紀錄
+curl "http://127.0.0.1:8000/api/training/reviews?project_id=<project_id>"
+
+# 匯出全部可訓練資料
+curl -OJ "http://127.0.0.1:8000/api/training/export?project_id=<project_id>"
+
+# 只匯出固定的資料集分割
+curl -OJ "http://127.0.0.1:8000/api/training/export?project_id=<project_id>&dataset_split=train"
+```
+
+資料集依專案與 PDF SHA-256 穩定分配為 80% train、10% validation、10% test；同一份 PDF 重複上傳仍會落在同一集合，避免訓練與測試資料洩漏。匯出的 JSONL 採 chat messages 格式，可供後續離線 LoRA／QLoRA pipeline 使用。提交審核不會自動啟動模型訓練或自動發布模型。
+
+知識圖譜編輯中的 relation 操作也會保存訓練審核事件：新增 relation 記為 `added` 正例、調整權重記為包含前後值的 `modified` 修正版、刪除 relation 記為 `rejected` 負例。三種操作共用審核者、備註與訓練同意設定，匯出時以 `task_type=relation_review` 及 `action=create|update|delete` 區分。
+
 ## 技術堆疊
 
 | 層級 | 技術 |
@@ -39,8 +62,8 @@ flowchart LR
 | 後端 | Python + FastAPI |
 | 前端 | Vue 3 + TypeScript + Vite |
 | PDF 轉譯 | PyMuPDF |
-| VLM 解析 | Anthropic Claude Vision 或 OpenAI Vision 相容模型 |
-| LLM 回答生成 | 預設為 OpenAI，並可退回 Anthropic / Ollama |
+| VLM 解析 | 本機 Ollama `gemma4:12b-it-q4_K_M` |
+| LLM 回答生成 | 本機 Ollama `gemma4:12b-it-q4_K_M` |
 | 向量資料庫 | Qdrant |
 | 中繼資料資料庫 | PostgreSQL 16 |
 | 圖譜分析 | NetworkX |
@@ -61,39 +84,27 @@ docker compose up -d postgres qdrant
 - PostgreSQL: localhost:55432
 - Qdrant: localhost:6333
 
-### 2. 設定後端環境
+### 2. 設定本機環境
+
+一鍵啟動腳本會自動產生資料庫密碼、編譯前端，並由單一內網 port 同時提供網頁與 API。目前信任內網測試模式預設不啟用帳密。先安裝兩個本機模型：
 
 ```bash
-cd backend
-cp .env.example .env
-```
-
-啟動 Ollama 並拉取 embedding 模型：
-
-```bash
+ollama pull gemma4:12b-it-q4_K_M
 ollama pull nomic-embed-text
+./start.sh
 ```
 
-至少要設定一組 VLM / API 金鑰：
-
-```bash
-ANTHROPIC_API_KEY=<your-anthropic-key>
-# 或
-OPENAI_API_KEY=<your-openai-key>
-```
+若手動啟動，請將根目錄與 `backend` 內的 `.env.example` 複製為 `.env`。在根目錄 `.env` 設定 `APP_PORT`，機房防火牆只需對內網開放這一個 port。
 
 backend/.env.example 內常用的預設值如下：
 
 ```bash
-DATABASE_URL=postgresql://visual_rag:visual_rag_password@localhost:55432/visual_rag
+DATABASE_URL=postgresql://visual_rag:<local-password>@localhost:55432/visual_rag
+RAG_AUTH_ENABLED=0
 QDRANT_URL=http://localhost:6333
 OLLAMA_URL=http://localhost:11434
 EMBED_MODEL=nomic-embed-text
-LLM_PROVIDER=openai
-OPENAI_MODEL=gpt-4.1-mini
-VLM_PROVIDER=anthropic
-ANTHROPIC_VISION_MODEL=claude-sonnet-4-5
-OPENAI_VISION_MODEL=gpt-4.1-mini
+OLLAMA_MODEL=gemma4:12b-it-q4_K_M
 ```
 
 交接給維運人員時，請保留 DATABASE_URL 與 QDRANT_URL。除非你刻意要用本機檔案模式向量儲存，否則不要在正式環境設定 QDRANT_PATH。
@@ -106,15 +117,12 @@ OPENAI_VISION_MODEL=gpt-4.1-mini
 
 | Key | 需填內容 | 範例 / 說明 |
 |---|---|---|
-| DATABASE_URL | PostgreSQL 連線字串 | postgresql://visual_rag:visual_rag_password@localhost:55432/visual_rag |
+| DATABASE_URL | PostgreSQL 連線字串 | 使用根目錄 `.env` 的密碼 |
+| RAG_AUTH_ENABLED | 是否啟用 API key 驗證 | 目前信任內網部署使用 `0` |
 | QDRANT_URL | Qdrant 服務 URL | http://localhost:6333 |
-| OLLAMA_URL | embedding 用的 Ollama 服務 URL | http://localhost:11434 |
+| OLLAMA_URL | 本機 Ollama 服務 URL | http://localhost:11434 |
 | EMBED_MODEL | Ollama embedding 模型 | nomic-embed-text |
-| LLM_PROVIDER | 回答生成使用的模型供應商 | 建議使用 openai |
-| OPENAI_API_KEY | OpenAI API key；當 LLM_PROVIDER=openai 或 VLM_PROVIDER=openai 時必填 | 請妥善保管，不要提交進版控 |
-| OPENAI_MODEL | 文字回答模型 | gpt-4.1-mini |
-| VLM_PROVIDER | PDF 視覺解析供應商 | 如果只用 OpenAI 計費，建議設為 openai |
-| OPENAI_VISION_MODEL | PDF 頁面理解用的 vision 模型 | gpt-4.1-mini |
+| OLLAMA_MODEL | 本機文字與視覺模型 | gemma4:12b-it-q4_K_M |
 | DSM_API_BASE_URL | 外部影像辨識節點所需的 DSM API 主機與埠號 | http://localhost:3000 |
 | DSM_API_TIMEOUT | DSM API 逾時秒數 | 8 |
 
@@ -122,13 +130,14 @@ OPENAI_VISION_MODEL=gpt-4.1-mini
 
 ```bash
 docker compose up -d postgres qdrant
+ollama pull gemma4:12b-it-q4_K_M
 ollama pull nomic-embed-text
 ```
 
 廠商應至少驗證：
 
 ```bash
-curl http://127.0.0.1:8000/health
+curl http://127.0.0.1:8000/api/health
 curl http://localhost:6333/collections
 curl http://localhost:11434/api/tags
 ```
@@ -272,20 +281,6 @@ GET /external/dsm/preview?location=台2線70.1K%20平浪橋南側&date=2024-06-0
 }
 ```
 
-### Anthropic 替代方案
-
-若廠商要用 Anthropic 來處理回答生成或 VLM 解析，可填入：
-
-```bash
-LLM_PROVIDER=anthropic
-ANTHROPIC_API_KEY=<vendor-anthropic-key>
-ANTHROPIC_MODEL=claude-sonnet-4-5
-VLM_PROVIDER=anthropic
-ANTHROPIC_VISION_MODEL=claude-sonnet-4-5
-```
-
-請確認 Anthropic 帳戶有足夠額度；若額度不足，當 LLM_PROVIDER=anthropic 時，/query 會失敗。
-
 ### 正式環境不要使用
 
 ```bash
@@ -304,17 +299,9 @@ pip install -r requirements.txt
 uvicorn main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-API：http://127.0.0.1:8000
+應用程式與 API：`http://<機房主機-IP>:8000`、`http://<機房主機-IP>:8000/api`
 
-### 4. 啟動前端
-
-```bash
-cd frontend
-npm install
-npm run dev -- --host 127.0.0.1 --port 5173
-```
-
-應用程式：http://127.0.0.1:5173
+機房只需對內網開放 `APP_PORT`（預設 8000）。`55432`、`6333`、`6334`、`11434` 不應對內網開放。
 
 ### 本機一鍵啟動
 
@@ -322,7 +309,7 @@ npm run dev -- --host 127.0.0.1 --port 5173
 ./start.sh
 ```
 
-此腳本會啟動 PostgreSQL、Qdrant、後端與前端。若 backend/.env 不存在，腳本會自動建立，並提示你設定 API key。
+此腳本會產生資料庫密碼、啟動 PostgreSQL 與 Qdrant、編譯前端，再從 `0.0.0.0:${APP_PORT:-8000}` 提供完整系統。若缺少本機模型，會停止並顯示對應的 `ollama pull` 指令。
 
 ## 使用方式
 
@@ -439,6 +426,10 @@ API 內部仍在某些端點名稱沿用 chunk，這只是為了相容舊介面�
 visual-rag-system/
 ├── backend/
 │   ├── main.py
+│   ├── evals/
+│   │   ├── eval_cases.jsonl
+│   │   ├── eval_metrics.py
+│   │   └── run_eval.py
 │   ├── rag/
 │   │   ├── loader.py
 │   │   ├── knowledge_extraction.py
@@ -470,6 +461,10 @@ visual-rag-system/
 ```bash
 cd backend
 python3 -m py_compile main.py rag/*.py
+python3 evals/test_eval_metrics.py
+
+# 後端啟動且已匯入測試專案後，可執行 PoC RAG 評測：
+python3 evals/run_eval.py --base-url http://127.0.0.1:8000
 
 cd ../frontend
 npm run build

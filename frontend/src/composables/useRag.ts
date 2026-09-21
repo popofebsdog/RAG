@@ -21,6 +21,7 @@ import type {
   ProjectFilterOptions,
   ExternalVisionPreviewResponse,
   ChunkRelation,
+  RelationReviewMetadata,
 } from '../types/rag'
 
 const BASE = '/api'
@@ -62,6 +63,7 @@ export function useRag() {
   const projectFiles = ref<DocInfo[]>([])
   const manualChunks = ref<ManualChunkInfo[]>([])
   const error = ref<string | null>(null)
+  const queryError = ref<string | null>(null)
   const sourceVersion = ref(Date.now())
   const projectFilterOptions = ref<ProjectFilterOptions>({
     locations: [],
@@ -172,7 +174,13 @@ export function useRag() {
     resetProjectScopedState()
   }
 
-  function deleteProject(id: string) {
+  async function deleteProject(id: string): Promise<void> {
+    try {
+      await axios.delete(`${BASE}/projects/${encodeURIComponent(id)}`)
+    } catch (e: unknown) {
+      error.value = apiErrorMessage(e)
+      throw e
+    }
     projects.value = projects.value.filter((p) => p.id !== id)
     saveProjects(projects.value)
     if (activeProjectId.value === id) {
@@ -393,6 +401,9 @@ export function useRag() {
         year: project?.meta.year ?? null,
         date: project?.meta.date ?? null,
         perspective: project?.meta.perspective ?? null,
+        reviewer_id: preview.reviewer_id?.trim() || null,
+        review_notes: preview.review_notes?.trim() || null,
+        training_eligible: preview.training_eligible ?? true,
       })
       ingestResult.value = data
       ingestPreview.value = null
@@ -411,8 +422,20 @@ export function useRag() {
     }
   }
 
-  function discardIngestPreview(): void {
-    ingestPreview.value = null
+  async function discardIngestPreview(): Promise<void> {
+    const preview = ingestPreview.value
+    if (!preview) return
+    try {
+      await axios.delete(`${BASE}/ingest/preview/${encodeURIComponent(preview.preview_id)}`, {
+        params: { project_id: activeProjectId.value ?? 'default' },
+      })
+      ingestPreview.value = null
+      sourceVersion.value = Date.now()
+      await fetchProjectFiles()
+    } catch (e: unknown) {
+      error.value = apiErrorMessage(e)
+      throw e
+    }
   }
 
   // ── manual chunks ─────────────────────────────────────────────────────────
@@ -467,6 +490,7 @@ export function useRag() {
     toChunkId: string,
     label: string,
     weight = 1.0,
+    review: RelationReviewMetadata = { training_eligible: true },
   ): Promise<ChunkRelation> {
     const { data } = await axios.post<ChunkRelation>(`${BASE}/chunks/relations`, {
       from_chunk_id: fromChunkId,
@@ -474,24 +498,32 @@ export function useRag() {
       label,
       weight,
       project_id: activeProjectId.value ?? 'default',
+      ...review,
     })
     await fetchRelations()
     return data
   }
 
-  async function updateRelationWeight(relationId: string, weight: number): Promise<ChunkRelation> {
+  async function updateRelationWeight(
+    relationId: string,
+    weight: number,
+    review: RelationReviewMetadata = { training_eligible: true },
+  ): Promise<ChunkRelation> {
     const { data } = await axios.patch<ChunkRelation>(
       `${BASE}/chunks/relations/${encodeURIComponent(relationId)}/weight`,
-      { weight },
+      { weight, ...review },
       { params: { project_id: activeProjectId.value ?? 'default' } },
     )
     await fetchRelations()
     return data
   }
 
-  async function deleteRelation(relationId: string): Promise<void> {
+  async function deleteRelation(
+    relationId: string,
+    review: RelationReviewMetadata = { training_eligible: true },
+  ): Promise<void> {
     await axios.delete(`${BASE}/chunks/relations/${encodeURIComponent(relationId)}`, {
-      params: { project_id: activeProjectId.value },
+      params: { project_id: activeProjectId.value, ...review },
     })
     await fetchRelations()
   }
@@ -506,7 +538,7 @@ export function useRag() {
   ): Promise<void> {
     const projectId = activeProjectId.value ?? 'default'
     querying.value = true
-    error.value = null
+    queryError.value = null
     try {
       const { data } = await axios.post<QueryResponse>(`${BASE}/query`, {
         question,
@@ -518,7 +550,7 @@ export function useRag() {
       if (activeProjectId.value !== projectId) return
       queryResult.value = data
     } catch (e: unknown) {
-      error.value = apiErrorMessage(e)
+      queryError.value = apiErrorMessage(e)
     } finally {
       querying.value = false
     }
@@ -587,6 +619,7 @@ export function useRag() {
     projectFiles,
     manualChunks,
     error,
+    queryError,
     projects,
     activeProjectId,
     activeProject,

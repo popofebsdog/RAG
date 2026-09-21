@@ -89,11 +89,34 @@
         </div>
       </div>
 
+      <div class="shrink-0 grid grid-cols-1 gap-3 border-t px-5 py-3 md:grid-cols-[220px_1fr_auto] md:items-end" style="border-color:#D7DEE8">
+        <label class="block">
+          <span class="review-label">{{ lang === 'zh' ? '審核者代號' : 'Reviewer ID' }}</span>
+          <input
+            v-model="draft.reviewer_id"
+            class="field mt-1"
+            :placeholder="lang === 'zh' ? '例如：engineer-01' : 'e.g. engineer-01'"
+          />
+        </label>
+        <label class="block">
+          <span class="review-label">{{ lang === 'zh' ? '審核備註' : 'Review notes' }}</span>
+          <input
+            v-model="draft.review_notes"
+            class="field mt-1"
+            :placeholder="lang === 'zh' ? '記錄判讀依據或修改原因' : 'Record evidence or reasons for changes'"
+          />
+        </label>
+        <label class="flex min-h-9 items-center gap-2 text-[12px] font-semibold" style="color:#41546F">
+          <input v-model="draft.training_eligible" type="checkbox" class="h-4 w-4 accent-[#1E4E8C]" />
+          <span>{{ lang === 'zh' ? '納入訓練資料' : 'Use for training' }}</span>
+        </label>
+      </div>
+
       <footer class="shrink-0 border-t px-5 py-3 flex items-center justify-between" style="border-color:#D7DEE8">
         <button type="button" class="secondary-btn" :disabled="busy" @click="emit('discard')">
           {{ lang === 'zh' ? '取消這次解析' : 'Discard' }}
         </button>
-        <button type="button" class="primary-btn" :disabled="busy || approvedNodes.length === 0" @click="confirm">
+        <button type="button" class="primary-btn" :disabled="busy || !canConfirm" @click="confirm">
           {{ busy
             ? (lang === 'zh' ? '建立知識圖譜中…' : 'Building…')
             : (lang === 'zh' ? '確認並建立知識圖譜' : 'Confirm and Build Knowledge Graph') }}
@@ -128,9 +151,17 @@ watch(() => props.preview, (next) => {
 
 const approvedNodes = computed(() => draft.nodes.filter((node) => node.approved && node.text.trim()))
 const approvedRelations = computed(() => draft.relations.filter((relation) => relation.approved))
+const canConfirm = computed(() => (
+  approvedNodes.value.length > 0
+  && (!draft.training_eligible || Boolean(draft.reviewer_id?.trim()))
+))
 
 function clonePreview(preview: IngestPreviewResponse): IngestPreviewResponse {
-  return JSON.parse(JSON.stringify(preview))
+  const cloned = JSON.parse(JSON.stringify(preview)) as IngestPreviewResponse
+  cloned.reviewer_id ??= ''
+  cloned.review_notes ??= ''
+  cloned.training_eligible ??= true
+  return cloned
 }
 
 function setAll(approved: boolean): void {
@@ -175,6 +206,11 @@ function confirm(): void {
 .field:focus {
   border-color: #9BB7D4;
   box-shadow: 0 0 0 3px rgba(30, 78, 140, 0.08);
+}
+.review-label {
+  color: #667085;
+  font-size: 11px;
+  font-weight: 700;
 }
 .small-btn,
 .secondary-btn,

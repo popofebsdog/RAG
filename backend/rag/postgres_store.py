@@ -142,6 +142,29 @@ def init_schema() -> None:
               anomalies JSONB NOT NULL DEFAULT '[]'::jsonb,
               created_at TIMESTAMPTZ NOT NULL DEFAULT now()
             );
+
+            CREATE TABLE IF NOT EXISTS training_review_samples (
+              sample_id TEXT PRIMARY KEY,
+              project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+              preview_id TEXT NOT NULL,
+              filename TEXT NOT NULL,
+              source_sha256 TEXT,
+              model_name TEXT,
+              prompt_version TEXT,
+              reviewer_id TEXT,
+              training_eligible BOOLEAN NOT NULL DEFAULT true,
+              dataset_split TEXT NOT NULL,
+              sample JSONB NOT NULL,
+              created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+              CONSTRAINT training_review_split CHECK (dataset_split IN ('train', 'validation', 'test')),
+              UNIQUE(project_id, preview_id)
+            );
+
+            CREATE INDEX IF NOT EXISTS training_review_project_idx
+              ON training_review_samples(project_id, created_at);
+            CREATE INDEX IF NOT EXISTS training_review_split_idx
+              ON training_review_samples(project_id, dataset_split)
+              WHERE training_eligible = true;
             """
         )
 
@@ -243,6 +266,13 @@ def clear_project(project_id: str) -> None:
         conn.execute("DELETE FROM relations WHERE project_id = %s", (project_id,))
         conn.execute("DELETE FROM chunks WHERE project_id = %s", (project_id,))
         conn.execute("DELETE FROM documents WHERE project_id = %s", (project_id,))
+
+
+def delete_project(project_id: str) -> None:
+    if not is_enabled():
+        return
+    with connect() as conn:
+        conn.execute("DELETE FROM projects WHERE id = %s", (project_id,))
 
 
 def bulk_upsert_chunks(project_id: str, payloads: Iterable[dict]) -> None:
@@ -503,3 +533,62 @@ def save_query_log(
                 Jsonb(anomalies or []),
             ),
         )
+
+
+def save_training_review_sample(sample: dict[str, Any]) -> None:
+    if not is_enabled():
+        raise RuntimeError("PostgreSQL is required to store training review samples")
+    project_id = str(sample.get("project_id") or "default")
+    ensure_project(project_id)
+    with connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO training_review_samples(
+              sample_id, project_id, preview_id, filename, source_sha256,
+              model_name, prompt_version, reviewer_id, training_eligible,
+              dataset_split, sample
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                sample["sample_id"],
+                project_id,
+                sample.get("preview_id") or "",
+                sample.get("filename") or "",
+                sample.get("source_sha256") or None,
+                sample.get("model_name") or None,
+                sample.get("prompt_version") or None,
+                sample.get("reviewer_id") or None,
+                bool(sample.get("training_eligible")),
+                sample["dataset_split"],
+                Jsonb(sample),
+            ),
+        )
+
+
+def list_training_review_samples(
+    project_id: str,
+    *,
+    dataset_split: str | None = None,
+    eligible_only: bool = False,
+) -> list[dict]:
+    if not is_enabled():
+        return []
+    clauses = ["project_id = %s"]
+    params: list[Any] = [project_id]
+    if dataset_split:
+        clauses.append("dataset_split = %s")
+        params.append(dataset_split)
+    if eligible_only:
+        clauses.append("training_eligible = true")
+    with connect() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT sample
+            FROM training_review_samples
+            WHERE {' AND '.join(clauses)}
+            ORDER BY created_at, sample_id
+            """,
+            tuple(params),
+        ).fetchall()
+    return [dict(row["sample"]) for row in rows]

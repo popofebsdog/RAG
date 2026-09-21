@@ -49,8 +49,8 @@ h1{font-size:34px;line-height:1.25;margin:0 0 16px;color:#0f172a}h2{font-size:24
 <p class="bullet">Framework：Vue 3</p>
 <p class="bullet">Language：TypeScript</p>
 <p class="bullet">Build tool：Vite</p>
-<p class="bullet">Dev server：http://127.0.0.1:5173</p>
-<p class="bullet">API proxy：`/api` 轉發至 `http://localhost:8000`</p>
+<p class="bullet">Build output：frontend/dist</p>
+<p class="bullet">Intranet entrypoint：單一 APP_PORT 同時提供前端與 /api</p>
 <div class="gap"></div>
 <p>主要前端模組：</p>
 <div class="gap"></div>
@@ -71,7 +71,7 @@ h1{font-size:34px;line-height:1.25;margin:0 0 16px;color:#0f172a}h2{font-size:24
 <div class="gap"></div>
 <p class="bullet">Framework：FastAPI</p>
 <p class="bullet">Language：Python 3.11</p>
-<p class="bullet">API server：http://127.0.0.1:8000</p>
+<p class="bullet">Intranet server：http://&lt;server-ip&gt;:&lt;APP_PORT&gt;</p>
 <p class="bullet">Main app：`backend/main.py`</p>
 <div class="gap"></div>
 <p>主要後端模組：</p>
@@ -146,34 +146,23 @@ h1{font-size:34px;line-height:1.25;margin:0 0 16px;color:#0f172a}h2{font-size:24
 <div class="gap"></div>
 <h2>5. LLM 與模型設定</h2>
 <div class="gap"></div>
-<h3>5.1 目前問答 LLM</h3>
+<h3>5.1 本機文字模型</h3>
 <div class="gap"></div>
 <p>問答回答目前由 `backend/rag/llm.py` 控制。</p>
 <div class="gap"></div>
-<p>目前預設：</p>
+<p>問答、知識抽取與因果異常判定統一使用：</p>
 <div class="gap"></div>
-<pre><code>LLM_PROVIDER=ollama
-OLLAMA_MODEL=llama3.2</code></pre>
+<pre><code>OLLAMA_MODEL=gemma4:12b-it-q4_K_M</code></pre>
 <div class="gap"></div>
-<p>若 `.env` 未設定 `LLM_PROVIDER`，問答會走本機 Ollama：</p>
+<p>請求只會送到本機 Ollama：</p>
 <div class="gap"></div>
 <pre><code>http://localhost:11434/api/chat</code></pre>
 <div class="gap"></div>
-<p>若要改為 API，需設定：</p>
+<h3>5.2 本機 VLM</h3>
 <div class="gap"></div>
-<pre><code>LLM_PROVIDER=anthropic
-ANTHROPIC_API_KEY=...
-ANTHROPIC_MODEL=claude-sonnet-4-5</code></pre>
+<p>PDF 頁面理解與使用者框選圖片同樣使用 Gemma 4 的視覺能力：</p>
 <div class="gap"></div>
-<p>目前尚未實作 OpenAI text answer provider；OpenAI 目前主要用於 VLM。</p>
-<div class="gap"></div>
-<h3>5.2 目前 VLM</h3>
-<div class="gap"></div>
-<p>`.env` 目前支援：</p>
-<div class="gap"></div>
-<pre><code>VLM_PROVIDER=openai
-OPENAI_API_KEY=...
-OPENAI_VISION_MODEL=gpt-4.1-mini</code></pre>
+<pre><code>OLLAMA_MODEL=gemma4:12b-it-q4_K_M</code></pre>
 <div class="gap"></div>
 <p>VLM 用於：</p>
 <div class="gap"></div>

@@ -56,6 +56,8 @@
         <button
           type="submit"
           :disabled="!canQuery || querying || !input.trim()"
+          :aria-label="lang === 'zh' ? '送出問題' : 'Send question'"
+          :title="lang === 'zh' ? '送出問題' : 'Send question'"
           class="px-3 py-2 rounded-lg disabled:opacity-30 disabled:cursor-not-allowed hover:opacity-80 transition-opacity"
           style="background:#1E4E8C;color:#fff"
         >
@@ -119,7 +121,19 @@ watch(() => props.queryResult, (result) => {
 
 watch(() => props.error, (err) => {
   if (!err) return
-  messages.value.push({ id: msgId++, role: 'assistant', content: `Error: ${err}` })
+  if (err.includes('LLM answer generation failed')) {
+    messages.value.push({
+      id: msgId++,
+      role: 'assistant',
+      content: props.lang === 'zh'
+        ? '回答失敗：模型服務暫時無法回覆，請檢查 LLM 服務與模型設定。'
+        : 'Answer failed: The model service is unavailable. Check the LLM service and model configuration.',
+    })
+    scrollToBottom()
+    return
+  }
+  const prefix = props.lang === 'zh' ? '回答失敗' : 'Answer failed'
+  messages.value.push({ id: msgId++, role: 'assistant', content: `${prefix}：${err}` })
   scrollToBottom()
 })
 
