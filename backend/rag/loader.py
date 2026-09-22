@@ -247,6 +247,7 @@ def _vlm_cache_key(image_b64s: list[str], page_num: int) -> str:
         "ollama",
         model,
         str(os.getenv("VLM_RENDER_DPI", "160")),
+        str(os.getenv("OLLAMA_VLM_THINK", "0")),
         str(page_num),
         hashlib.sha256("".join(hashlib.sha256(img.encode("ascii")).hexdigest() for img in image_b64s).encode("ascii")).hexdigest(),
     ])
@@ -279,6 +280,7 @@ def _vlm_extract_page_cached(image_b64s: list[str], page_num: int) -> tuple[str,
                         "prompt_version": _VLM_PROMPT_VERSION,
                         "provider": "ollama",
                         "model": os.getenv("OLLAMA_MODEL", "gemma4:12b-it-q4_K_M"),
+                        "think": os.getenv("OLLAMA_VLM_THINK", "0"),
                         "created_at": int(time.time()),
                         "text": text,
                     },
@@ -334,6 +336,7 @@ def _ollama_vision_extract(image_b64s: list[str], page_num: int) -> str:
             json={
                 "model": os.getenv("OLLAMA_MODEL", "gemma4:12b-it-q4_K_M"),
                 "stream": False,
+                "think": os.getenv("OLLAMA_VLM_THINK", "0").strip().lower() in {"1", "true", "yes", "on"},
                 "messages": [
                     {"role": "user", "content": prompt, "images": image_b64s},
                 ],

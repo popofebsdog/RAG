@@ -93,7 +93,17 @@ class LocalGemmaModelTest(unittest.TestCase):
         args, kwargs = post.call_args
         self.assertEqual(args[0], "http://ollama.local:11434/api/chat")
         self.assertEqual(kwargs["json"]["model"], "gemma4:12b-it-q4_K_M")
+        self.assertFalse(kwargs["json"]["think"])
         self.assertEqual(kwargs["json"]["messages"][0]["images"], ["image-one", "image-two"])
+
+    @patch("httpx.post")
+    def test_pdf_vision_can_enable_model_thinking(self, post) -> None:
+        post.return_value.json.return_value = {"message": {"content": "## Page 1\n- result"}}
+
+        with patch.dict(os.environ, {"OLLAMA_VLM_THINK": "1"}, clear=False):
+            loader._vlm_extract_page(["image-one"], 1)
+
+        self.assertTrue(post.call_args.kwargs["json"]["think"])
 
     @patch.object(main.httpx, "post")
     def test_selection_vision_uses_local_gemma4(self, post) -> None:

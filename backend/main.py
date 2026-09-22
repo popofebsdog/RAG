@@ -2311,11 +2311,11 @@ def update_relation_weight_endpoint(relation_id: str, body: RelationWeightUpdate
     ok = update_relation_weight(relation_id, body.weight, project_id)
     if not ok:
         raise HTTPException(404, f"Relation '{relation_id}' not found")
-    get_store().set_relation_weight(relation_id, body.weight)
     relations = list_relations(project_id)
     r = next((x for x in relations if x["id"] == relation_id), None)
     if not r:
         raise HTTPException(404)
+    _upsert_relation_vector(r)
     _save_relation_training_event("update", before, r, body, project_id=project_id)
     return RelationInfo(**r)
 

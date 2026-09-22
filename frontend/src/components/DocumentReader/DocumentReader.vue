@@ -37,23 +37,34 @@
             </div>
 
             <div class="space-y-0.5 max-h-56 overflow-y-auto">
-              <button
+              <div
                 v-for="mc in docManualChunks"
                 :key="mc.chunk_id"
-                class="w-full text-left px-2 py-1.5 rounded-lg border transition-all"
+                class="group flex w-full items-start gap-1 rounded-lg border px-2 py-1.5 transition-all"
                 :class="focusedChunkId === mc.chunk_id
                   ? 'border-amber-500 bg-amber-100 shadow-sm'
                   : 'border-amber-200 bg-amber-50/60 hover:border-amber-400 hover:bg-amber-50'"
-                @click="goToChunkSource(mc)"
               >
-                <div class="flex items-center gap-2">
-                  <p class="min-w-0 flex-1 text-[11px] text-amber-800 font-medium truncate">{{ mc.label }}</p>
-                  <span v-if="chunkPage(mc)" class="shrink-0 text-[9px] font-mono text-amber-700 bg-white/70 border border-amber-200 rounded px-1">
-                    p.{{ chunkPage(mc) }}
-                  </span>
-                </div>
-                <p class="text-[10px] text-faint line-clamp-2">{{ mc.text }}</p>
-              </button>
+                <button class="min-w-0 flex-1 text-left" @click="goToChunkSource(mc)">
+                  <div class="flex items-center gap-2">
+                    <p class="min-w-0 flex-1 text-[11px] text-amber-800 font-medium truncate">{{ mc.label }}</p>
+                    <span v-if="chunkPage(mc)" class="shrink-0 text-[9px] font-mono text-amber-700 bg-white/70 border border-amber-200 rounded px-1">
+                      p.{{ chunkPage(mc) }}
+                    </span>
+                  </div>
+                  <p class="text-[10px] text-faint line-clamp-2">{{ mc.text }}</p>
+                </button>
+                <button
+                  class="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded text-amber-700 opacity-70 transition-colors hover:bg-red-50 hover:text-red-700 group-hover:opacity-100"
+                  :aria-label="lang === 'zh' ? `刪除知識節點 ${mc.label}` : `Delete knowledge node ${mc.label}`"
+                  :title="lang === 'zh' ? '刪除知識節點' : 'Delete knowledge node'"
+                  @click="requestDeleteChunk(mc)"
+                >
+                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M6 2h4M2.5 4h11M5 4v9M8 4v9M11 4v9M4 4l.5 10h7L12 4" />
+                  </svg>
+                </button>
+              </div>
             </div>
           </div>
         </aside>
@@ -229,6 +240,37 @@
           </div>
         </Transition>
       </Teleport>
+
+      <Teleport to="body">
+        <Transition name="pop">
+          <div v-if="pendingDeleteChunk" class="fixed inset-0 z-[80] flex items-center justify-center px-5">
+            <div class="absolute inset-0 bg-black/35 backdrop-blur-[2px]" @click="pendingDeleteChunk = null" />
+            <div class="relative w-[min(420px,92vw)] rounded-lg border border-border bg-surface shadow-2xl">
+              <div class="px-5 pb-3 pt-5">
+                <h3 class="text-[16px] font-semibold text-ink">
+                  {{ lang === 'zh' ? '刪除知識節點' : 'Delete knowledge node' }}
+                </h3>
+                <p class="mt-2 text-[13px] leading-relaxed text-sub">
+                  {{ lang === 'zh'
+                    ? '這會同時移除節點向量與連接它的節點關係，無法復原。'
+                    : 'This also removes the node vector and connected relations. This cannot be undone.' }}
+                </p>
+                <div class="mt-3 truncate rounded-lg border border-border bg-rail px-3 py-2 text-[12px] font-medium text-sub">
+                  {{ pendingDeleteChunk.label }}
+                </div>
+              </div>
+              <div class="flex justify-end gap-2 border-t border-border px-5 py-3">
+                <button class="rounded-lg border border-border bg-white px-4 py-2 text-[13px] font-medium text-sub" :disabled="deletingNode" @click="pendingDeleteChunk = null">
+                  {{ lang === 'zh' ? '取消' : 'Cancel' }}
+                </button>
+                <button class="rounded-lg bg-red-700 px-4 py-2 text-[13px] font-semibold text-white disabled:opacity-50" :disabled="deletingNode" @click="confirmDeleteChunk">
+                  {{ deletingNode ? (lang === 'zh' ? '刪除中…' : 'Deleting…') : (lang === 'zh' ? '確認刪除' : 'Delete') }}
+                </button>
+              </div>
+            </div>
+          </div>
+        </Transition>
+      </Teleport>
     </div>
   </Teleport>
 </template>
@@ -297,6 +339,8 @@ const selectionError = ref('')
 const selectionLabel = ref('')
 const selectionDescription = ref('')
 const submitting = ref(false)
+const pendingDeleteChunk = ref<ManualChunkInfo | null>(null)
+const deletingNode = ref(false)
 
 const imageRefs = new Map<number, HTMLImageElement>()
 const pageRefs = new Map<number, HTMLElement>()
@@ -657,6 +701,25 @@ async function goToChunkSource(chunk: ManualChunkInfo) {
   } else {
     selectedPage.value = page || null
     if (page) await scrollToPage(page)
+  }
+}
+
+function requestDeleteChunk(chunk: ManualChunkInfo) {
+  pendingDeleteChunk.value = chunk
+}
+
+async function confirmDeleteChunk() {
+  const chunk = pendingDeleteChunk.value
+  if (!chunk || deletingNode.value) return
+  deletingNode.value = true
+  try {
+    await props.deleteManualChunk(chunk.chunk_id)
+    if (focusedChunkId.value === chunk.chunk_id) focusedChunkId.value = null
+    successMsg.value = lang.value === 'zh' ? `「${chunk.label}」已刪除` : `"${chunk.label}" deleted`
+    setTimeout(() => { successMsg.value = '' }, 3000)
+    pendingDeleteChunk.value = null
+  } finally {
+    deletingNode.value = false
   }
 }
 

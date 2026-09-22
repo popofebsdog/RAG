@@ -84,10 +84,13 @@ class RelationTrainingDataTest(unittest.TestCase):
         save_event.assert_called_once_with("create", None, relation(), request)
 
     @patch.object(main, "_save_relation_training_event")
+    @patch.object(main, "_upsert_relation_vector")
     @patch.object(main, "get_store")
     @patch.object(main, "update_relation_weight", return_value=True)
     @patch.object(main, "list_relations")
-    def test_weight_update_records_before_and_after(self, list_items, _update, _store, save_event) -> None:
+    def test_weight_update_records_before_and_after(
+        self, list_items, _update, _store, upsert_vector, save_event
+    ) -> None:
         before = relation(0.6)
         after = relation(0.9)
         list_items.side_effect = [[before], [after]]
@@ -99,6 +102,7 @@ class RelationTrainingDataTest(unittest.TestCase):
 
         main.update_relation_weight_endpoint("rel-1", body, project_id="project-a")
 
+        upsert_vector.assert_called_once_with(after)
         save_event.assert_called_once_with("update", before, after, body, project_id="project-a")
 
     @patch.object(main, "_save_relation_training_event")
