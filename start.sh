@@ -4,7 +4,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 if [ ! -f .env ]; then
-  printf 'POSTGRES_PASSWORD=%s\nAPP_PORT=8000\n' "$(openssl rand -hex 32)" > .env
+  printf 'POSTGRES_PASSWORD=%s\nAPP_PORT=8000\nOLLAMA_VERSION=0.34.2\nOLLAMA_MODEL=gemma4:12b-it-q4_K_M\nEMBED_MODEL=nomic-embed-text\n' "$(openssl rand -hex 32)" > .env
   chmod 600 .env
 fi
 
@@ -25,24 +25,9 @@ if [[ ! "$APP_PORT" =~ ^[0-9]+$ ]] || [ "$APP_PORT" -lt 1 ] || [ "$APP_PORT" -gt
   exit 1
 fi
 
-if [ ! -f backend/.env ]; then
-  sed \
-    -e "s#<same-postgres-password-as-root-env>#$POSTGRES_PASSWORD#" \
-    backend/.env.example > backend/.env
-  chmod 600 backend/.env
-fi
+chmod 600 .env
 
-for model in gemma4:12b-it-q4_K_M nomic-embed-text; do
-  if ! ollama show "$model" >/dev/null 2>&1; then
-    echo "Missing local Ollama model: $model"
-    echo "Install it with: ollama pull $model"
-    exit 1
-  fi
-done
-
-echo "Starting local Visual RAG services..."
-docker compose up -d postgres qdrant
-
+docker compose up -d postgres
 for _ in {1..30}; do
   if docker compose exec -T postgres pg_isready -U visual_rag -d visual_rag >/dev/null 2>&1; then
     break
@@ -56,18 +41,8 @@ fi
 printf "ALTER ROLE visual_rag WITH PASSWORD '%s';\n" "$POSTGRES_PASSWORD" \
   | docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U visual_rag -d visual_rag >/dev/null
 
-(
-  cd frontend
-  [ ! -d node_modules ] && npm install
-  npm run build
-)
-
-cd backend
-if [ ! -d .venv ]; then
-  python3 -m venv .venv
-fi
-source .venv/bin/activate
-python -m pip install -r requirements.txt
+echo "Building and starting containerized Visual RAG services..."
+docker compose up -d --build --wait
 
 echo "Visual RAG is available on the intranet at http://<server-ip>:$APP_PORT"
-exec uvicorn main:app --host 0.0.0.0 --port "$APP_PORT"
+docker compose ps

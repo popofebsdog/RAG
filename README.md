@@ -52,7 +52,14 @@ flowchart LR
 
 ### 1. Prerequisites
 
-Install Docker, Python 3, Node.js/npm, and Ollama 0.34.2 or newer. Gemma 4 cannot run on the older Ollama 0.22.0 release.
+The deployment host needs Docker Engine, the Docker Compose plugin, NVIDIA Driver R580 or newer, and NVIDIA Container Toolkit. Python, Node.js, Ollama, and the CUDA runtime are provided by containers.
+
+Verify GPU access before deployment:
+
+```bash
+nvidia-smi
+docker run --rm --gpus all nvidia/cuda:13.0.0-base-ubuntu24.04 nvidia-smi
+```
 
 Clone the branch currently provided for vendor testing:
 
@@ -61,88 +68,88 @@ git clone --branch feat/intranet-gemma4-deployment --single-branch https://githu
 cd RAG
 ```
 
-Download the local models and verify that Ollama is running:
-
-```bash
-ollama pull gemma4:12b-it-q4_K_M
-ollama pull nomic-embed-text
-ollama list
-```
-
 ### 2. One-command startup (recommended)
 
 ```bash
 ./start.sh
 ```
 
-The script generates the database password and environment files, starts PostgreSQL and Qdrant, installs backend dependencies, builds the frontend, and serves the complete system from `0.0.0.0:${APP_PORT:-8000}`.
+The script builds the app image, starts PostgreSQL, Qdrant, and the Ollama `0.34.2` image with its CUDA 13 runner, then downloads the Gemma4 and embedding models. The initial model download requires at least 8 GB and may take some time.
 
 Open `http://<server-ip>:8000`, or `http://127.0.0.1:8000` for local-only testing.
 
-### 3. Start storage services manually
+### 3. Start with custom settings
 
 ```bash
-docker compose up -d postgres qdrant
+cp .env.example .env
+# Replace POSTGRES_PASSWORD with the output of: openssl rand -hex 32
+chmod 600 .env
+./start.sh
 ```
 
 Default local ports:
 
 - PostgreSQL: `localhost:55432`
 - Qdrant: `localhost:6333`
+- Ollama: `localhost:11434`
+- Application: `0.0.0.0:8000`
 
 ### 4. Configure local environment
 
-For manual startup, copy `.env.example` and `backend/.env.example` to their corresponding `.env` files. Set `APP_PORT` in the root `.env` to the single port that operations will allow from the intranet.
+Container deployment only uses the root `.env`. `backend/.env` is for non-container development.
 
-Useful defaults in `backend/.env.example`:
+Root `.env` settings:
 
 ```bash
-DATABASE_URL=postgresql://visual_rag:<local-password>@localhost:55432/visual_rag
-RAG_AUTH_ENABLED=0
-QDRANT_URL=http://localhost:6333
-OLLAMA_URL=http://localhost:11434
-EMBED_MODEL=nomic-embed-text
+POSTGRES_PASSWORD=<generated-with-openssl-rand-hex-32>
+APP_PORT=8000
+OLLAMA_VERSION=0.34.2
 OLLAMA_MODEL=gemma4:12b-it-q4_K_M
-OLLAMA_TIMEOUT=600
-VLM_CONCURRENCY=1
-VLM_TIMEOUT=600
-VLM_PAGE_TILES=0
+EMBED_MODEL=nomic-embed-text
+RAG_AUTH_ENABLED=0
+RAG_API_KEY=
+DSM_API_BASE_URL=http://host.docker.internal:3000
 ```
 
-For maintainer handoff, keep `DATABASE_URL` and `QDRANT_URL` enabled. Do not set `QDRANT_PATH` in production unless you intentionally want local file-mode vector storage.
+Compose supplies `DATABASE_URL`, `QDRANT_URL`, and `OLLAMA_URL` from service names. Do not replace them with `localhost` inside the app container.
 
 ## Vendor Environment Checklist
 
-When handing the system to an operations vendor, ask them to create `backend/.env` from `backend/.env.example` and fill the values below.
+Ask the vendor to create the root `.env` from `.env.example` and fill the values below.
 
 ### Required
 
 | Key | What To Fill | Example / Note |
 |---|---|---|
-| `DATABASE_URL` | PostgreSQL connection string | Use the password from the root `.env` |
+| `POSTGRES_PASSWORD` | PostgreSQL password | `openssl rand -hex 32` |
+| `OLLAMA_VERSION` | Pinned inference-engine version | `0.34.2` |
 | `RAG_AUTH_ENABLED` | Enable API-key authentication | `0` for the current trusted-intranet deployment |
-| `QDRANT_URL` | Qdrant server URL | `http://localhost:6333` |
-| `OLLAMA_URL` | Local Ollama server URL | `http://localhost:11434` |
 | `EMBED_MODEL` | Ollama embedding model | `nomic-embed-text` |
 | `OLLAMA_MODEL` | Local text and vision model | `gemma4:12b-it-q4_K_M` |
-| `DSM_API_BASE_URL` | Vendor DSM API host and port, required for external image-recognition nodes | `http://localhost:3000` |
-| `DSM_API_TIMEOUT` | DSM API timeout in seconds | `8` |
+| `DSM_API_BASE_URL` | External DSM API; use this value when it runs on the host | `http://host.docker.internal:3000` |
 
-### Required Local Service Setup
+### Startup
 
 ```bash
-docker compose up -d postgres qdrant
-ollama pull gemma4:12b-it-q4_K_M
-ollama pull nomic-embed-text
+./start.sh
 ```
 
 The vendor should verify:
 
 ```bash
-curl http://127.0.0.1:8000/api/health
+nvidia-smi
+docker compose ps
+curl http://127.0.0.1:8000/health
 curl http://localhost:6333/collections
 curl http://localhost:11434/api/tags
+docker compose exec ollama ollama run gemma4:12b-it-q4_K_M "Reply with: GPU test passed"
+docker compose exec ollama ollama ps
+docker compose exec ollama ollama list
 ```
+
+`ollama ps` must show GPU use in the `PROCESSOR` column. The vendor must also record the model IDs from `ollama list`; downloading the models alone is not GPU acceptance.
+
+Unless deployment is on a fully isolated trusted intranet, production must set `RAG_AUTH_ENABLED=1` with a strong `RAG_API_KEY` and restrict `APP_PORT` at the firewall.
 
 ### Optional / Tuning
 
@@ -295,7 +302,13 @@ QDRANT_PATH=./qdrant_data
 
 ### 5. Development mode
 
-Start PostgreSQL, Qdrant, and Ollama first, then use two terminals.
+For host-based backend and frontend development, start only the dependencies in Compose:
+
+```bash
+docker compose up -d postgres qdrant ollama ollama-init
+```
+
+Then use two terminals.
 
 Backend:
 
@@ -327,16 +340,15 @@ Only `APP_PORT` (default `8000`) should be opened to the intranet. Keep ports `5
 ./start.sh
 ```
 
-The script creates the database secret, starts PostgreSQL and Qdrant, builds the frontend, and serves the complete application from `0.0.0.0:${APP_PORT:-8000}`. It stops with the exact `ollama pull` command when a required local model is missing.
+The script creates the database secret, builds the app image, starts the complete stack, and waits for service health. `ollama-init` downloads models into the `ollama_data` volume.
 
 ### Inspect configuration and service status
 
 ```bash
 cat .env
-grep -E '^(DATABASE_URL|QDRANT_URL|OLLAMA_URL|OLLAMA_MODEL|EMBED_MODEL|VLM_)' backend/.env
 docker compose ps
-ollama list
-curl http://127.0.0.1:8000/api/health
+docker compose exec ollama ollama list
+curl http://127.0.0.1:8000/health
 curl http://127.0.0.1:6333/collections
 curl http://127.0.0.1:11434/api/tags
 ```
@@ -448,7 +460,7 @@ Local folders store binary and generated assets:
 - OCR/VLM cache
 - graph JSON output
 
-For production deployment, mount these folders to persistent storage or replace them with object storage.
+Compose stores these files in the `app_data` volume. On first startup, existing `backend/*_cache` directories and `backend/data` are imported into an empty volume. PostgreSQL and Qdrant retain their existing data directories, while Ollama uses `ollama_data`. Production operations still need a backup policy.
 
 ## Repository Structure
 
@@ -478,6 +490,8 @@ visual-rag-system/
 │       │   └── ChatPanel/
 │       ├── composables/useRag.ts
 │       └── types/rag.ts
+├── Dockerfile
+├── docker-entrypoint.sh
 ├── docker-compose.yml
 └── start.sh
 ```

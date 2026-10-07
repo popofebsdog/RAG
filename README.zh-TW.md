@@ -75,7 +75,14 @@ curl -OJ "http://127.0.0.1:8000/api/training/export?project_id=<project_id>&data
 
 ### 1. 安裝前準備
 
-請先安裝 Docker、Python 3、Node.js/npm，以及 Ollama 0.34.2 或更新版本。Gemma 4 無法在舊版 Ollama 0.22.0 上使用。
+部署主機需安裝 Docker Engine、Docker Compose plugin、NVIDIA Driver R580 以上，以及 NVIDIA Container Toolkit。Python、Node.js、Ollama 與 CUDA runtime 都由容器提供，不需安裝在主機。
+
+先確認 Docker 可以使用 GPU：
+
+```bash
+nvidia-smi
+docker run --rm --gpus all nvidia/cuda:13.0.0-base-ubuntu24.04 nvidia-smi
+```
 
 取得目前提供廠商測試的分支：
 
@@ -84,88 +91,88 @@ git clone --branch feat/intranet-gemma4-deployment --single-branch https://githu
 cd RAG
 ```
 
-下載本機模型，並確認 Ollama 服務已啟動：
-
-```bash
-ollama pull gemma4:12b-it-q4_K_M
-ollama pull nomic-embed-text
-ollama list
-```
-
 ### 2. 一鍵啟動（建議）
 
 ```bash
 ./start.sh
 ```
 
-腳本會自動產生資料庫密碼、建立環境設定、啟動 PostgreSQL 與 Qdrant、安裝後端套件、編譯前端，並從 `0.0.0.0:${APP_PORT:-8000}` 提供完整系統。
+腳本會建立 app image，啟動 PostgreSQL、Qdrant 與具備 CUDA 13 runner 的 Ollama `0.34.2` 容器，並自動下載 Gemma4 與 Embedding 模型。首次下載約需 8 GB 以上空間與較長時間。
 
 啟動後開啟 `http://<主機 IP>:8000`。若只在本機測試，使用 `http://127.0.0.1:8000`。
 
-### 3. 手動啟動儲存服務
+### 3. 自訂設定後啟動
 
 ```bash
-docker compose up -d postgres qdrant
+cp .env.example .env
+# 將 .env 的 POSTGRES_PASSWORD 改成 openssl rand -hex 32 的輸出
+chmod 600 .env
+./start.sh
 ```
 
 本機預設埠號：
 
 - PostgreSQL: localhost:55432
 - Qdrant: localhost:6333
+- Ollama: localhost:11434
+- 應用程式: 0.0.0.0:8000
 
 ### 4. 設定本機環境
 
-若手動啟動，請將根目錄與 `backend` 內的 `.env.example` 複製為 `.env`。在根目錄 `.env` 設定 `APP_PORT`，機房防火牆只需對內網開放這一個 port。
+容器部署只使用根目錄 `.env`。`backend/.env` 僅供不使用容器的開發模式使用。
 
-backend/.env.example 內常用的預設值如下：
+根目錄 `.env` 主要設定如下：
 
 ```bash
-DATABASE_URL=postgresql://visual_rag:<local-password>@localhost:55432/visual_rag
-RAG_AUTH_ENABLED=0
-QDRANT_URL=http://localhost:6333
-OLLAMA_URL=http://localhost:11434
-EMBED_MODEL=nomic-embed-text
+POSTGRES_PASSWORD=<使用 openssl rand -hex 32 產生>
+APP_PORT=8000
+OLLAMA_VERSION=0.34.2
 OLLAMA_MODEL=gemma4:12b-it-q4_K_M
-OLLAMA_TIMEOUT=600
-VLM_CONCURRENCY=1
-VLM_TIMEOUT=600
-VLM_PAGE_TILES=0
+EMBED_MODEL=nomic-embed-text
+RAG_AUTH_ENABLED=0
+RAG_API_KEY=
+DSM_API_BASE_URL=http://host.docker.internal:3000
 ```
 
-交接給維運人員時，請保留 DATABASE_URL 與 QDRANT_URL。除非你刻意要用本機檔案模式向量儲存，否則不要在正式環境設定 QDRANT_PATH。
+Compose 會自動使用服務名稱設定 `DATABASE_URL`、`QDRANT_URL` 與 `OLLAMA_URL`，不要在 `.env` 改成 `localhost`。
 
 ## 交付廠商時的環境檢查清單
 
-若要把系統交給外部維運或廠商，請要求他們以 backend/.env.example 為基礎建立 backend/.env，並填入以下設定。
+請廠商以根目錄 `.env.example` 建立 `.env`，並填入以下設定。
 
 ### 必填
 
 | Key | 需填內容 | 範例 / 說明 |
 |---|---|---|
-| DATABASE_URL | PostgreSQL 連線字串 | 使用根目錄 `.env` 的密碼 |
+| POSTGRES_PASSWORD | PostgreSQL 密碼 | `openssl rand -hex 32` |
+| OLLAMA_VERSION | 固定的推論引擎版本 | `0.34.2` |
 | RAG_AUTH_ENABLED | 是否啟用 API key 驗證 | 目前信任內網部署使用 `0` |
-| QDRANT_URL | Qdrant 服務 URL | http://localhost:6333 |
-| OLLAMA_URL | 本機 Ollama 服務 URL | http://localhost:11434 |
 | EMBED_MODEL | Ollama embedding 模型 | nomic-embed-text |
 | OLLAMA_MODEL | 本機文字與視覺模型 | gemma4:12b-it-q4_K_M |
-| DSM_API_BASE_URL | 外部影像辨識節點所需的 DSM API 主機與埠號 | http://localhost:3000 |
-| DSM_API_TIMEOUT | DSM API 逾時秒數 | 8 |
+| DSM_API_BASE_URL | 外部 DSM API；若在主機上執行可使用下列值 | http://host.docker.internal:3000 |
 
-### 必要的本機服務安裝
+### 啟動
 
 ```bash
-docker compose up -d postgres qdrant
-ollama pull gemma4:12b-it-q4_K_M
-ollama pull nomic-embed-text
+./start.sh
 ```
 
 廠商應至少驗證：
 
 ```bash
-curl http://127.0.0.1:8000/api/health
+nvidia-smi
+docker compose ps
+curl http://127.0.0.1:8000/health
 curl http://localhost:6333/collections
 curl http://localhost:11434/api/tags
+docker compose exec ollama ollama run gemma4:12b-it-q4_K_M "請回答：GPU 測試成功"
+docker compose exec ollama ollama ps
+docker compose exec ollama ollama list
 ```
+
+`ollama ps` 的 `PROCESSOR` 必須顯示 GPU，廠商並應記錄 `ollama list` 的模型 ID。只完成模型下載不算 GPU 驗收通過。
+
+正式環境若非完全隔離的可信內網，必須設定 `RAG_AUTH_ENABLED=1` 及高強度 `RAG_API_KEY`，並由防火牆限制 `APP_PORT` 的來源。
 
 ### 可選設定 / 調校參數
 
@@ -316,7 +323,13 @@ QDRANT_PATH 僅適用於本機檔案模式測試。交付廠商時請保持註�
 
 ### 5. 開發模式
 
-先啟動 PostgreSQL、Qdrant 與 Ollama，再分別開啟兩個終端機。
+若要在主機直接開發後端與前端，可只用 Compose 啟動相依服務：
+
+```bash
+docker compose up -d postgres qdrant ollama ollama-init
+```
+
+再分別開啟兩個終端機。
 
 後端：
 
@@ -348,16 +361,15 @@ npm run dev
 ./start.sh
 ```
 
-此腳本會產生資料庫密碼、啟動 PostgreSQL 與 Qdrant、編譯前端，再從 `0.0.0.0:${APP_PORT:-8000}` 提供完整系統。若缺少本機模型，會停止並顯示對應的 `ollama pull` 指令。
+此腳本會產生資料庫密碼、建置 app image、啟動全部容器並等待服務健康。模型由 `ollama-init` 自動下載到 `ollama_data` volume。
 
 ### 查看設定與服務狀態
 
 ```bash
 cat .env
-grep -E '^(DATABASE_URL|QDRANT_URL|OLLAMA_URL|OLLAMA_MODEL|EMBED_MODEL|VLM_)' backend/.env
 docker compose ps
-ollama list
-curl http://127.0.0.1:8000/api/health
+docker compose exec ollama ollama list
+curl http://127.0.0.1:8000/health
 curl http://127.0.0.1:6333/collections
 curl http://127.0.0.1:11434/api/tags
 ```
@@ -469,7 +481,7 @@ API 內部仍在某些端點名稱沿用 chunk，這只是為了相容舊介面�
 - OCR / VLM 快取
 - 圖譜 JSON 輸出
 
-若要正式部署，請把這些資料夾掛到持久化儲存，或改接物件儲存服務。
+Compose 會把這些檔案保存於 `app_data` volume；首次啟動時會把既有的 `backend/*_cache` 與 `backend/data` 匯入空的 volume。PostgreSQL、Qdrant 沿用原資料目錄，Ollama 使用 `ollama_data` volume。正式維運仍需建立備份策略。
 
 ## Repository 結構
 
@@ -503,6 +515,8 @@ visual-rag-system/
 │       │   └── ChatPanel/
 │       ├── composables/useRag.ts
 │       └── types/rag.ts
+├── Dockerfile
+├── docker-entrypoint.sh
 ├── docker-compose.yml
 └── start.sh
 ```

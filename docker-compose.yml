@@ -1,10 +1,77 @@
 services:
+  app:
+    build: .
+    environment:
+      DATABASE_URL: postgresql://visual_rag:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/visual_rag
+      QDRANT_URL: http://qdrant:6333
+      OLLAMA_URL: http://ollama:11434
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-gemma4:12b-it-q4_K_M}
+      EMBED_MODEL: ${EMBED_MODEL:-nomic-embed-text}
+      RAG_AUTH_ENABLED: ${RAG_AUTH_ENABLED:-0}
+      RAG_API_KEY: ${RAG_API_KEY:-}
+      RAG_COOKIE_SECURE: ${RAG_COOKIE_SECURE:-0}
+      OLLAMA_TIMEOUT: ${OLLAMA_TIMEOUT:-600}
+      OLLAMA_VLM_THINK: ${OLLAMA_VLM_THINK:-0}
+      PDF_LOADER: ${PDF_LOADER:-pymupdf4llm}
+      PDF_MAX_UPLOAD_BYTES: ${PDF_MAX_UPLOAD_BYTES:-52428800}
+      PDF_MAX_FILENAME_LENGTH: ${PDF_MAX_FILENAME_LENGTH:-180}
+      PDF_MAX_PAGES: ${PDF_MAX_PAGES:-300}
+      VLM_RENDER_DPI: ${VLM_RENDER_DPI:-160}
+      VLM_MAX_PAGES: ${VLM_MAX_PAGES:-20}
+      VLM_TIMEOUT: ${VLM_TIMEOUT:-600}
+      VLM_CONCURRENCY: ${VLM_CONCURRENCY:-1}
+      VLM_CACHE: ${VLM_CACHE:-1}
+      VLM_PAGE_TILES: ${VLM_PAGE_TILES:-0}
+      VLM_TILE_GRID: ${VLM_TILE_GRID:-2}
+      CHUNK_SIZE: ${CHUNK_SIZE:-500}
+      CHUNK_OVERLAP: ${CHUNK_OVERLAP:-50}
+      CHUNK_MODE: ${CHUNK_MODE:-semantic}
+      SEMANTIC_THRESHOLD: ${SEMANTIC_THRESHOLD:-0.70}
+      TOP_K: ${TOP_K:-5}
+      MANUAL_BOOST: ${MANUAL_BOOST:-0.15}
+      KG_EXTRACTION_USE_LLM: ${KG_EXTRACTION_USE_LLM:-1}
+      KG_EXTRACTION_TIMEOUT: ${KG_EXTRACTION_TIMEOUT:-300}
+      KG_EXTRACTION_CHAR_BUDGET: ${KG_EXTRACTION_CHAR_BUDGET:-9000}
+      OCR_DPI: ${OCR_DPI:-180}
+      OCR_LANG: ${OCR_LANG:-chi_tra+eng}
+      DSM_API_BASE_URL: ${DSM_API_BASE_URL:-http://host.docker.internal:3000}
+      EXTERNAL_VISION_API_URL: ${EXTERNAL_VISION_API_URL:-http://host.docker.internal:3000}
+      DSM_API_TIMEOUT: ${DSM_API_TIMEOUT:-8}
+    ports:
+      - "${APP_PORT:-8000}:8000"
+    volumes:
+      - app_data:/data
+      - ./backend/data:/legacy/data:ro
+      - ./backend/source_cache:/legacy/source_cache:ro
+      - ./backend/pages_cache:/legacy/pages_cache:ro
+      - ./backend/graphs_cache:/legacy/graphs_cache:ro
+      - ./backend/markdown_cache:/legacy/markdown_cache:ro
+      - ./backend/relations_cache:/legacy/relations_cache:ro
+      - ./backend/ocr_cache:/legacy/ocr_cache:ro
+      - ./backend/vlm_cache:/legacy/vlm_cache:ro
+      - ./backend/images_cache:/legacy/images_cache:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      ollama-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
   postgres:
     image: postgres:16-alpine
     environment:
       POSTGRES_DB: visual_rag
       POSTGRES_USER: visual_rag
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in the root .env file}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
     ports:
       - "127.0.0.1:55432:5432"
     volumes:
@@ -19,8 +86,46 @@ services:
   qdrant:
     image: qdrant/qdrant:v1.19.0
     ports:
-      - "127.0.0.1:6333:6333"   # REST
-      - "127.0.0.1:6334:6334"   # gRPC
+      - "127.0.0.1:6333:6333"
+      - "127.0.0.1:6334:6334"
     volumes:
       - ./qdrant_data:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c ':> /dev/tcp/127.0.0.1/6333'"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
     restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:${OLLAMA_VERSION:-0.34.2}
+    environment:
+      OLLAMA_HOST: 0.0.0.0:11434
+    gpus: all
+    ports:
+      - "127.0.0.1:11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  ollama-init:
+    image: ollama/ollama:${OLLAMA_VERSION:-0.34.2}
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-gemma4:12b-it-q4_K_M}
+      EMBED_MODEL: ${EMBED_MODEL:-nomic-embed-text}
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["ollama pull $$OLLAMA_MODEL && ollama pull $$EMBED_MODEL"]
+    depends_on:
+      ollama:
+        condition: service_healthy
+    restart: "no"
+
+volumes:
+  app_data:
+  ollama_data:
